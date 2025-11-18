@@ -34,6 +34,7 @@ export interface ScriptBlock extends BaseNode {
   ast: AcornNode; // JavaScript AST from Acorn
   lang?: string; // Language attribute (e.g., 'ts' for TypeScript)
   imports?: ImportDeclaration[]; // Extracted import statements
+  types?: TypeDefinition[]; // TypeScript interfaces and type aliases
 }
 
 /**
@@ -52,6 +53,15 @@ export interface ImportSpecifier {
   type: 'default' | 'named' | 'namespace';
   local: string; // Local binding name
   imported?: string; // Original name (for named imports)
+}
+
+/**
+ * Type Definition (TypeScript interface or type alias)
+ */
+export interface TypeDefinition extends BaseNode {
+  type: 'InterfaceDeclaration' | 'TypeAlias';
+  name: string; // Type name
+  body: string; // Type definition source code
 }
 
 /**
@@ -81,8 +91,12 @@ export type TemplateASTNodeType =
   | 'MustacheTag'
   | 'IfBlock'
   | 'EachBlock'
+  | 'KeyBlock'
   | 'Slot'
-  | 'RenderBlock';
+  | 'RenderBlock'
+  | 'ConstTag'
+  | 'HtmlTag'
+  | 'DebugTag';
 
 /**
  * Base Template AST Node
@@ -232,6 +246,40 @@ export interface RenderBlockASTNode extends BaseTemplateNode {
 }
 
 /**
+ * Const tag (e.g., {@const doubled = count * 2})
+ */
+export interface ConstTagASTNode extends BaseTemplateNode {
+  type: 'ConstTag';
+  name: string; // Variable name
+  expression: AcornNode; // Value expression
+}
+
+/**
+ * Html tag (e.g., {@html htmlString})
+ */
+export interface HtmlTagASTNode extends BaseTemplateNode {
+  type: 'HtmlTag';
+  expression: AcornNode; // HTML string expression
+}
+
+/**
+ * Debug tag (e.g., {@debug count, message})
+ */
+export interface DebugTagASTNode extends BaseTemplateNode {
+  type: 'DebugTag';
+  identifiers: string[]; // Variables to debug
+}
+
+/**
+ * Key block (e.g., {#key value}...{/key})
+ */
+export interface KeyBlockASTNode extends BaseTemplateNode {
+  type: 'KeyBlock';
+  expression: AcornNode; // Key expression
+  children: TemplateASTNode[];
+}
+
+/**
  * Union type for all template AST nodes
  */
 export type TemplateASTNode =
@@ -240,8 +288,12 @@ export type TemplateASTNode =
   | MustacheTagASTNode
   | IfBlockASTNode
   | EachBlockASTNode
+  | KeyBlockASTNode
   | SlotASTNode
-  | RenderBlockASTNode;
+  | RenderBlockASTNode
+  | ConstTagASTNode
+  | HtmlTagASTNode
+  | DebugTagASTNode;
 
 /**
  * Complete Durable Component AST (D-AST)

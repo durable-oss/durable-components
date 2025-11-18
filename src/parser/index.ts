@@ -6,12 +6,23 @@
  * and parses each into their respective AST representations.
  */
 
-import { parse as acornParse } from 'acorn';
+import { parse as acornParse, Parser } from 'acorn';
 import type { DurableComponentAST, ScriptBlock, TemplateBlock, StyleBlock } from '../types/ast';
 import type { ParseOptions } from '../types/compiler';
 import { extractBlockContent, filenameToComponentName } from '../utils/string';
 import { CompilerError } from '../types/compiler';
 import { parseTemplate } from './template-parser';
+
+// Import acorn-typescript using require to avoid module resolution issues
+const getTsPlugin = () => {
+  try {
+    const acornTs = require('acorn-typescript');
+    return acornTs.default || acornTs.tsPlugin || acornTs;
+  } catch (error) {
+    console.warn('acorn-typescript not available, TypeScript parsing will not work');
+    return null;
+  }
+};
 
 /**
  * Main parse function
@@ -163,13 +174,33 @@ function parseScript(content: string, start: number, lang?: string): ScriptBlock
 
   try {
     // Parse JavaScript/TypeScript with Acorn
-    // Note: Acorn doesn't natively support TypeScript syntax, but for now
-    // we'll parse it as JavaScript and preserve the lang attribute
-    const ast = acornParse(content, {
-      ecmaVersion: 2022,
-      sourceType: 'module',
-      locations: true
-    });
+    // Use acorn-typescript parser when lang is 'ts' or 'typescript'
+    const isTypeScript = lang === 'ts' || lang === 'typescript';
+    let ast;
+
+    if (isTypeScript) {
+      const tsPlugin = getTsPlugin();
+      if (tsPlugin) {
+        ast = Parser.extend(tsPlugin() as any).parse(content, {
+          ecmaVersion: 2022,
+          sourceType: 'module',
+          locations: true
+        });
+      } else {
+        // Fallback to regular parsing
+        ast = acornParse(content, {
+          ecmaVersion: 2022,
+          sourceType: 'module',
+          locations: true
+        });
+      }
+    } else {
+      ast = acornParse(content, {
+        ecmaVersion: 2022,
+        sourceType: 'module',
+        locations: true
+      });
+    }
 
     // Defensive: validate parsed AST
     if (!ast || typeof ast !== 'object') {

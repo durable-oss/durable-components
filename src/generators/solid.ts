@@ -35,14 +35,16 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
   };
 
   // Generate component body
+  const externalImports = generateExternalImports(ir);
+  const types = generateTypes(ir);
   const propsInterface = generatePropsInterface(ir);
   const component = generateComponent(ir, ctx);
 
-  // Generate imports
-  const imports = generateImports(ctx);
+  // Generate Solid imports
+  const solidImports = generateSolidImports(ctx);
 
   // Combine all parts
-  const code = joinStatements(imports, propsInterface, component);
+  const code = joinStatements(solidImports, externalImports, types, propsInterface, component);
 
   return {
     code
@@ -50,15 +52,70 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
 }
 
 /**
- * Generate imports based on used primitives
+ * Generate Solid imports based on used primitives
  */
-function generateImports(ctx: GeneratorContext): string {
+function generateSolidImports(ctx: GeneratorContext): string {
   if (ctx.usedPrimitives.size === 0) {
     return '';
   }
 
   const primitives = Array.from(ctx.usedPrimitives).sort();
   return `import { ${primitives.join(', ')} } from 'solid-js';`;
+}
+
+/**
+ * Generate external module imports
+ */
+function generateExternalImports(ir: DurableComponentIR): string {
+  if (!ir.imports || ir.imports.length === 0) return '';
+
+  const imports = ir.imports.map((imp) => {
+    const specifiers: string[] = [];
+
+    for (const spec of imp.specifiers) {
+      if (spec.type === 'default') {
+        specifiers.push(spec.local);
+      } else if (spec.type === 'named') {
+        if (spec.imported && spec.imported !== spec.local) {
+          specifiers.push(`${spec.imported} as ${spec.local}`);
+        } else {
+          specifiers.push(spec.local);
+        }
+      } else if (spec.type === 'namespace') {
+        return `import * as ${spec.local} from '${imp.source}';`;
+      }
+    }
+
+    if (specifiers.length === 0) {
+      return `import '${imp.source}';`;
+    }
+
+    // Check if we have both default and named imports
+    const defaultImport = imp.specifiers.find(s => s.type === 'default');
+    const namedImports = imp.specifiers.filter(s => s.type === 'named');
+
+    if (defaultImport && namedImports.length > 0) {
+      const namedSpecs = namedImports.map(s =>
+        s.imported && s.imported !== s.local ? `${s.imported} as ${s.local}` : s.local
+      );
+      return `import ${defaultImport.local}, { ${namedSpecs.join(', ')} } from '${imp.source}';`;
+    } else if (defaultImport) {
+      return `import ${defaultImport.local} from '${imp.source}';`;
+    } else {
+      return `import { ${specifiers.join(', ')} } from '${imp.source}';`;
+    }
+  });
+
+  return imports.join('\n');
+}
+
+/**
+ * Generate TypeScript type definitions
+ */
+function generateTypes(ir: DurableComponentIR): string {
+  if (!ir.types || ir.types.length === 0) return '';
+
+  return ir.types.map(type => type.body).join('\n\n');
 }
 
 /**

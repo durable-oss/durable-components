@@ -1,0 +1,21 @@
+<script lang="ts">
+interface Props {
+  name: string;
+}
+
+let { name = 'World' }: Props = $props();
+let count = $state(0);
+</script>
+
+<template>
+  <div>
+    <h1>Hello {name}!</h1>
+    <p>Count: {count}</p>
+  </div>
+</template>
+
+<style>
+h1 {
+  color: blue;
+}
+</style>

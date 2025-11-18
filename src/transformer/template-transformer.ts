@@ -11,7 +11,11 @@ import type {
   MustacheTagASTNode,
   IfBlockASTNode,
   EachBlockASTNode,
-  RenderBlockASTNode
+  KeyBlockASTNode,
+  RenderBlockASTNode,
+  ConstTagASTNode,
+  HtmlTagASTNode,
+  DebugTagASTNode
 } from '../types/ast';
 import type {
   TemplateNode,
@@ -20,7 +24,11 @@ import type {
   ExpressionNode,
   IfNode,
   EachNode,
+  KeyNode,
   RenderNode,
+  ConstNode,
+  HtmlNode,
+  DebugNode,
   AttributeBinding
 } from '../types/ir';
 
@@ -110,6 +118,8 @@ function transformNode(node: TemplateASTNode): TemplateNode {
         return transformIfBlock(node);
       case 'EachBlock':
         return transformEachBlock(node);
+      case 'KeyBlock':
+        return transformKeyBlock(node);
       case 'Slot': {
         // Defensive: validate Slot node
         if (typeof node.name !== 'string') {
@@ -128,6 +138,12 @@ function transformNode(node: TemplateASTNode): TemplateNode {
       }
       case 'RenderBlock':
         return transformRenderBlock(node);
+      case 'ConstTag':
+        return transformConstTag(node);
+      case 'HtmlTag':
+        return transformHtmlTag(node);
+      case 'DebugTag':
+        return transformDebugTag(node);
       default:
         // Defensive: warn about unknown node type
         const unknownType = (node as any).type;
@@ -445,4 +461,48 @@ function prefixExpression(expr: string): string {
   }
 
   return expr;
+}
+
+/**
+ * Transform {@const} tag
+ */
+function transformConstTag(node: ConstTagASTNode): ConstNode {
+  return {
+    type: 'const',
+    name: node.name,
+    expression: extractExpression(node.expression)
+  };
+}
+
+/**
+ * Transform {@html} tag
+ */
+function transformHtmlTag(node: HtmlTagASTNode): HtmlNode {
+  return {
+    type: 'html',
+    expression: extractExpression(node.expression)
+  };
+}
+
+/**
+ * Transform {@debug} tag
+ */
+function transformDebugTag(node: DebugTagASTNode): DebugNode {
+  return {
+    type: 'debug',
+    identifiers: node.identifiers
+  };
+}
+
+/**
+ * Transform {#key} block
+ */
+function transformKeyBlock(node: KeyBlockASTNode): KeyNode {
+  const children = node.children.map(transformNode);
+
+  return {
+    type: 'key',
+    expression: extractExpression(node.expression),
+    children
+  };
 }

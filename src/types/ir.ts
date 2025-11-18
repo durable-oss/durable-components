@@ -26,6 +26,15 @@ export interface ImportDefinition {
 }
 
 /**
+ * Type Definition (TypeScript interface or type alias)
+ */
+export interface TypeDefinition {
+  type: 'interface' | 'type';
+  name: string; // Type name
+  body: string; // Type definition source code
+}
+
+/**
  * Component Property Definition
  */
 export interface PropDefinition {
@@ -71,7 +80,7 @@ export interface FunctionDefinition {
 /**
  * Template Node Types
  */
-export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'slot' | 'render';
+export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug';
 
 /**
  * Base Template Node (unist-compatible)
@@ -159,6 +168,40 @@ export interface RenderNode extends BaseTemplateNode {
 }
 
 /**
+ * Const Node (local template constant like {@const x = value})
+ */
+export interface ConstNode extends BaseTemplateNode {
+  type: 'const';
+  name: string; // Variable name
+  expression: string; // Value expression
+}
+
+/**
+ * Html Node (raw HTML like {@html htmlString})
+ */
+export interface HtmlNode extends BaseTemplateNode {
+  type: 'html';
+  expression: string; // HTML string expression
+}
+
+/**
+ * Debug Node (debug statement like {@debug var1, var2})
+ */
+export interface DebugNode extends BaseTemplateNode {
+  type: 'debug';
+  identifiers: string[]; // Variables to debug
+}
+
+/**
+ * Key Block Node (keyed rendering like {#key value}...{/key})
+ */
+export interface KeyNode extends BaseTemplateNode, Parent {
+  type: 'key';
+  expression: string; // Key expression
+  children: TemplateNode[];
+}
+
+/**
  * Union type for all template nodes
  */
 export type TemplateNode =
@@ -167,8 +210,12 @@ export type TemplateNode =
   | ExpressionNode
   | IfNode
   | EachNode
+  | KeyNode
   | SlotNode
-  | RenderNode;
+  | RenderNode
+  | ConstNode
+  | HtmlNode
+  | DebugNode;
 
 /**
  * Complete Durable Component IR
@@ -193,6 +240,9 @@ export interface DurableComponentIR extends Node {
 
   /** External module imports */
   imports?: ImportDefinition[];
+
+  /** TypeScript type definitions (interfaces and type aliases) */
+  types?: TypeDefinition[];
 
   /** Component properties (inputs) */
   props: PropDefinition[];

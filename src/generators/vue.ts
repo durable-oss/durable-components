@@ -40,11 +40,16 @@ export function generateVue(ir: DurableComponentIR): CompiledJS {
   // Combine script and template
   const parts: string[] = [];
 
-  if (scriptContent.trim()) {
+  if (scriptContent.trim() || ir.imports || ir.types) {
     // Generate imports
-    const imports = generateImports(ctx);
-    const fullScript = imports ? `${imports}\n\n${scriptContent}` : scriptContent;
-    parts.push(`<script setup>\n${indent(fullScript)}\n</script>`);
+    const vueImports = generateVueImports(ctx);
+    const externalImports = generateExternalImports(ir);
+    const types = generateTypes(ir);
+    const imports = joinStatements(vueImports, externalImports);
+    const fullScript = joinStatements(imports, types, scriptContent);
+
+    const scriptLang = ir.lang === 'ts' || ir.lang === 'typescript' ? ' lang="ts"' : '';
+    parts.push(`<script setup${scriptLang}>\n${indent(fullScript)}\n</script>`);
   }
 
   if (templateContent.trim()) {
@@ -59,15 +64,70 @@ export function generateVue(ir: DurableComponentIR): CompiledJS {
 }
 
 /**
- * Generate imports based on used composables
+ * Generate Vue imports based on used composables
  */
-function generateImports(ctx: GeneratorContext): string {
+function generateVueImports(ctx: GeneratorContext): string {
   if (ctx.usedComposables.size === 0) {
     return '';
   }
 
   const composables = Array.from(ctx.usedComposables).sort();
   return `import { ${composables.join(', ')} } from 'vue';`;
+}
+
+/**
+ * Generate external module imports
+ */
+function generateExternalImports(ir: DurableComponentIR): string {
+  if (!ir.imports || ir.imports.length === 0) return '';
+
+  const imports = ir.imports.map((imp) => {
+    const specifiers: string[] = [];
+
+    for (const spec of imp.specifiers) {
+      if (spec.type === 'default') {
+        specifiers.push(spec.local);
+      } else if (spec.type === 'named') {
+        if (spec.imported && spec.imported !== spec.local) {
+          specifiers.push(`${spec.imported} as ${spec.local}`);
+        } else {
+          specifiers.push(spec.local);
+        }
+      } else if (spec.type === 'namespace') {
+        return `import * as ${spec.local} from '${imp.source}';`;
+      }
+    }
+
+    if (specifiers.length === 0) {
+      return `import '${imp.source}';`;
+    }
+
+    // Check if we have both default and named imports
+    const defaultImport = imp.specifiers.find(s => s.type === 'default');
+    const namedImports = imp.specifiers.filter(s => s.type === 'named');
+
+    if (defaultImport && namedImports.length > 0) {
+      const namedSpecs = namedImports.map(s =>
+        s.imported && s.imported !== s.local ? `${s.imported} as ${s.local}` : s.local
+      );
+      return `import ${defaultImport.local}, { ${namedSpecs.join(', ')} } from '${imp.source}';`;
+    } else if (defaultImport) {
+      return `import ${defaultImport.local} from '${imp.source}';`;
+    } else {
+      return `import { ${specifiers.join(', ')} } from '${imp.source}';`;
+    }
+  });
+
+  return imports.join('\n');
+}
+
+/**
+ * Generate TypeScript type definitions
+ */
+function generateTypes(ir: DurableComponentIR): string {
+  if (!ir.types || ir.types.length === 0) return '';
+
+  return ir.types.map(type => type.body).join('\n\n');
 }
 
 /**

@@ -95,6 +95,7 @@ export function transform(ast: DurableComponentAST): DurableComponentIR {
     }
 
     ir.imports = scriptAnalysis.imports;
+    ir.types = scriptAnalysis.types;
     ir.props = scriptAnalysis.props;
     ir.state = scriptAnalysis.state;
     ir.derived = scriptAnalysis.derived;

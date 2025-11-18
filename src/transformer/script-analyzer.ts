@@ -12,13 +12,15 @@ import type {
   DerivedDefinition,
   EffectDefinition,
   FunctionDefinition,
-  ImportDefinition
+  ImportDefinition,
+  TypeDefinition
 } from '../types/ir';
 import type { ScriptBlock } from '../types/ast';
 import { CompilerError } from '../types/compiler';
 
 interface ScriptAnalysis {
   imports: ImportDefinition[];
+  types: TypeDefinition[];
   props: PropDefinition[];
   state: StateDefinition[];
   derived: DerivedDefinition[];
@@ -46,6 +48,7 @@ export function extractRunesFromScript(script: ScriptBlock): ScriptAnalysis {
 
   const analysis: ScriptAnalysis = {
     imports: [],
+    types: [],
     props: [],
     state: [],
     derived: [],
@@ -92,6 +95,18 @@ function analyzeNode(node: any, analysis: ScriptAnalysis, source: string): void 
   // Import declaration
   if (node.type === 'ImportDeclaration') {
     analyzeImportDeclaration(node, analysis, source);
+    return;
+  }
+
+  // TypeScript interface declaration
+  if (node.type === 'TSInterfaceDeclaration') {
+    analyzeTypeScriptInterface(node, analysis, source);
+    return;
+  }
+
+  // TypeScript type alias
+  if (node.type === 'TSTypeAliasDeclaration') {
+    analyzeTypeScriptTypeAlias(node, analysis, source);
     return;
   }
 
@@ -447,4 +462,54 @@ function analyzeImportDeclaration(node: any, analysis: ScriptAnalysis, source: s
   }
 
   analysis.imports.push(importDef);
+}
+
+/**
+ * Analyze TypeScript interface declaration
+ */
+function analyzeTypeScriptInterface(node: any, analysis: ScriptAnalysis, source: string): void {
+  // Defensive: validate node
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+  if (node.type !== 'TSInterfaceDeclaration') {
+    return;
+  }
+  if (!node.id || typeof node.id.name !== 'string') {
+    return;
+  }
+
+  const name = node.id.name;
+  const body = getExpressionSource(node, source);
+
+  analysis.types.push({
+    type: 'interface',
+    name,
+    body
+  });
+}
+
+/**
+ * Analyze TypeScript type alias declaration
+ */
+function analyzeTypeScriptTypeAlias(node: any, analysis: ScriptAnalysis, source: string): void {
+  // Defensive: validate node
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+  if (node.type !== 'TSTypeAliasDeclaration') {
+    return;
+  }
+  if (!node.id || typeof node.id.name !== 'string') {
+    return;
+  }
+
+  const name = node.id.name;
+  const body = getExpressionSource(node, source);
+
+  analysis.types.push({
+    type: 'type',
+    name,
+    body
+  });
 }

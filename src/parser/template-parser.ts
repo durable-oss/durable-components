@@ -13,7 +13,11 @@ import type {
   MustacheTagASTNode,
   IfBlockASTNode,
   EachBlockASTNode,
+  KeyBlockASTNode,
   RenderBlockASTNode,
+  ConstTagASTNode,
+  HtmlTagASTNode,
+  DebugTagASTNode,
   TemplateAttribute
 } from '../types/ast';
 import { CompilerError } from '../types/compiler';
@@ -141,6 +145,8 @@ function parseBlock(state: ParserState): TemplateASTNode {
     return parseIfBlock(state, start);
   } else if (directive === 'each') {
     return parseEachBlock(state, start);
+  } else if (directive === 'key') {
+    return parseKeyBlock(state, start);
   }
 
   throw new CompilerError(
@@ -161,14 +167,23 @@ function parseAtDirective(state: ParserState): TemplateASTNode {
   consume(state, '{');
   consume(state, '@');
 
-  const directive = readUntil(state, /[\s(]/);
+  const directive = readUntil(state, /[\s}]/);
 
   if (directive === 'render') {
+    skipWhitespace(state);
     return parseRenderBlock(state, start);
+  } else if (directive === 'const') {
+    skipWhitespace(state);
+    return parseConstTag(state, start);
+  } else if (directive === 'html') {
+    skipWhitespace(state);
+    return parseHtmlTag(state, start);
+  } else if (directive === 'debug') {
+    skipWhitespace(state);
+    return parseDebugTag(state, start);
   }
 
-  // For now, just consume unsupported @ directives and return a text node
-  // In the future, we can add support for {@const}, {@html}, {@debug}
+  // Unsupported @ directive - consume and return as text
   const content = readUntil(state, '}');
   consume(state, '}');
 
@@ -245,6 +260,216 @@ function parseRenderBlock(state: ParserState, start: number): RenderBlockASTNode
     expression: fullExpression,
     snippet,
     args: args.length > 0 ? args : undefined,
+    start,
+    end: state.index
+  };
+}
+
+/**
+ * Read until closing brace, handling nested braces in template literals and objects
+ */
+function readUntilClosingBrace(state: ParserState): string {
+  let result = '';
+  let depth = 0;
+  let inString = false;
+  let inTemplateLiteral = false;
+  let stringChar = '';
+
+  while (state.index < state.input.length) {
+    const ch = peek(state);
+    const next = peek(state, 1);
+
+    // Handle template literals
+    if (ch === '`' && !inString) {
+      inTemplateLiteral = !inTemplateLiteral;
+      result += ch;
+      state.index++;
+      continue;
+    }
+
+    // Handle strings
+    if ((ch === '"' || ch === "'") && !inTemplateLiteral) {
+      if (!inString) {
+        inString = true;
+        stringChar = ch;
+      } else if (ch === stringChar) {
+        inString = false;
+      }
+      result += ch;
+      state.index++;
+      continue;
+    }
+
+    // Handle braces
+    if (!inString && !inTemplateLiteral) {
+      if (ch === '{') {
+        depth++;
+        result += ch;
+        state.index++;
+        continue;
+      }
+      if (ch === '}') {
+        if (depth === 0) {
+          // Found the closing brace
+          return result;
+        }
+        depth--;
+        result += ch;
+        state.index++;
+        continue;
+      }
+    }
+
+    // Handle template literal expressions
+    if (inTemplateLiteral && ch === '$' && next === '{') {
+      result += ch;
+      state.index++;
+      result += peek(state);
+      state.index++;
+      depth++;
+      continue;
+    }
+
+    result += ch;
+    state.index++;
+  }
+
+  throw new CompilerError(
+    'Unexpected end of input in @const declaration',
+    { line: 0, column: state.index },
+    undefined,
+    'UNEXPECTED_EOF'
+  );
+}
+
+/**
+ * Parse {@const name = value} directive
+ */
+function parseConstTag(state: ParserState, start: number): ConstTagASTNode {
+  // Read the entire declaration: name = value
+  const declaration = readUntilClosingBrace(state);
+  consume(state, '}');
+
+  // Parse the declaration to extract name and value
+  // Format: name = expression
+  // Use indexOf to find first = to handle complex expressions like template literals
+  const equalsIndex = declaration.indexOf('=');
+  if (equalsIndex === -1) {
+    throw new CompilerError(
+      `Invalid @const declaration: ${declaration}`,
+      { line: 0, column: start },
+      undefined,
+      'INVALID_SYNTAX'
+    );
+  }
+
+  const name = declaration.substring(0, equalsIndex).trim();
+  const expressionStr = declaration.substring(equalsIndex + 1).trim();
+
+  // Validate name is a valid identifier
+  if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name)) {
+    throw new CompilerError(
+      `Invalid variable name in @const: ${name}`,
+      { line: 0, column: start },
+      undefined,
+      'INVALID_SYNTAX'
+    );
+  }
+
+  const expression = parseExpression(expressionStr);
+
+  return {
+    type: 'ConstTag',
+    name,
+    expression,
+    start,
+    end: state.index
+  };
+}
+
+/**
+ * Parse {@html expression} directive
+ */
+function parseHtmlTag(state: ParserState, start: number): HtmlTagASTNode {
+  // Read the expression
+  const expr = readUntil(state, '}');
+  consume(state, '}');
+
+  if (!expr || expr.trim().length === 0) {
+    throw new CompilerError(
+      'Empty @html expression',
+      { line: 0, column: start },
+      undefined,
+      'INVALID_SYNTAX'
+    );
+  }
+
+  const expression = parseExpression(expr.trim());
+
+  return {
+    type: 'HtmlTag',
+    expression,
+    start,
+    end: state.index
+  };
+}
+
+/**
+ * Parse {@debug var1, var2, ...} directive
+ */
+function parseDebugTag(state: ParserState, start: number): DebugTagASTNode {
+  // Read the variable list (or empty for all)
+  const vars = readUntil(state, '}');
+  consume(state, '}');
+
+  const identifiers = vars.trim()
+    ? vars.split(',').map(v => v.trim()).filter(Boolean)
+    : [];
+
+  return {
+    type: 'DebugTag',
+    identifiers,
+    start,
+    end: state.index
+  };
+}
+
+/**
+ * Parse {#key expression} block
+ */
+function parseKeyBlock(state: ParserState, start: number): KeyBlockASTNode {
+  skipWhitespace(state);
+
+  // Parse key expression
+  const expr = readUntil(state, '}');
+  consume(state, '}');
+
+  const expression = parseExpression(expr.trim());
+
+  // Parse children until {/key}
+  const children: TemplateASTNode[] = [];
+  while (state.index < state.input.length) {
+    if (peek(state) === '{' && peek(state, 1) === '/') {
+      const checkpoint = state.index;
+      consume(state, '{');
+      consume(state, '/');
+      const closing = readUntil(state, '}');
+      if (closing === 'key') {
+        consume(state, '}');
+        break;
+      }
+      // Not our closing tag, rewind
+      state.index = checkpoint;
+    }
+
+    const node = parseNode(state);
+    if (node) children.push(node);
+  }
+
+  return {
+    type: 'KeyBlock',
+    expression,
+    children,
     start,
     end: state.index
   };
