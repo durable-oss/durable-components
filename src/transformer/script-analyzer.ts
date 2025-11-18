@@ -11,12 +11,14 @@ import type {
   StateDefinition,
   DerivedDefinition,
   EffectDefinition,
-  FunctionDefinition
+  FunctionDefinition,
+  ImportDefinition
 } from '../types/ir';
 import type { ScriptBlock } from '../types/ast';
 import { CompilerError } from '../types/compiler';
 
 interface ScriptAnalysis {
+  imports: ImportDefinition[];
   props: PropDefinition[];
   state: StateDefinition[];
   derived: DerivedDefinition[];
@@ -43,6 +45,7 @@ export function extractRunesFromScript(script: ScriptBlock): ScriptAnalysis {
   }
 
   const analysis: ScriptAnalysis = {
+    imports: [],
     props: [],
     state: [],
     derived: [],
@@ -86,6 +89,12 @@ export function extractRunesFromScript(script: ScriptBlock): ScriptAnalysis {
  * Analyze a single AST node
  */
 function analyzeNode(node: any, analysis: ScriptAnalysis, source: string): void {
+  // Import declaration
+  if (node.type === 'ImportDeclaration') {
+    analyzeImportDeclaration(node, analysis, source);
+    return;
+  }
+
   // Variable declaration: let/const
   if (node.type === 'VariableDeclaration') {
     for (const declarator of node.declarations) {
@@ -387,4 +396,55 @@ function getExpressionSource(node: any, source: string): string {
   }
 
   return '';
+}
+
+/**
+ * Analyze import declaration
+ */
+function analyzeImportDeclaration(node: any, analysis: ScriptAnalysis, source: string): void {
+  // Defensive: validate node
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+  if (node.type !== 'ImportDeclaration') {
+    return;
+  }
+  if (!node.source || typeof node.source.value !== 'string') {
+    return;
+  }
+
+  const importDef: ImportDefinition = {
+    source: node.source.value,
+    specifiers: []
+  };
+
+  // Process import specifiers
+  if (Array.isArray(node.specifiers)) {
+    for (const specifier of node.specifiers) {
+      if (!specifier || typeof specifier !== 'object') continue;
+
+      if (specifier.type === 'ImportDefaultSpecifier') {
+        // Default import: import Foo from './foo'
+        importDef.specifiers.push({
+          type: 'default',
+          local: specifier.local?.name || 'unknown'
+        });
+      } else if (specifier.type === 'ImportSpecifier') {
+        // Named import: import { foo, bar as baz } from './foo'
+        importDef.specifiers.push({
+          type: 'named',
+          local: specifier.local?.name || 'unknown',
+          imported: specifier.imported?.name || specifier.local?.name || 'unknown'
+        });
+      } else if (specifier.type === 'ImportNamespaceSpecifier') {
+        // Namespace import: import * as foo from './foo'
+        importDef.specifiers.push({
+          type: 'namespace',
+          local: specifier.local?.name || 'unknown'
+        });
+      }
+    }
+  }
+
+  analysis.imports.push(importDef);
 }

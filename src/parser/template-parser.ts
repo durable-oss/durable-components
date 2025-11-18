@@ -13,6 +13,7 @@ import type {
   MustacheTagASTNode,
   IfBlockASTNode,
   EachBlockASTNode,
+  RenderBlockASTNode,
   TemplateAttribute
 } from '../types/ast';
 import { CompilerError } from '../types/compiler';
@@ -93,6 +94,11 @@ function parseNode(state: ParserState): TemplateASTNode | null {
     return parseBlock(state);
   }
 
+  // Check for @ directives {@render}, {@const}, {@html}
+  if (peek(state) === '{' && peek(state, 1) === '@') {
+    return parseAtDirective(state);
+  }
+
   // Check for block closing {/if}, {/each} or else {:else}
   if (peek(state) === '{' && (peek(state, 1) === '/' || peek(state, 1) === ':')) {
     // Don't parse these - they should be handled by the parent block parser
@@ -143,6 +149,105 @@ function parseBlock(state: ParserState): TemplateASTNode {
     undefined,
     'UNKNOWN_DIRECTIVE'
   );
+}
+
+/**
+ * Parse @ directive ({@render}, {@const}, {@html}, etc.)
+ */
+function parseAtDirective(state: ParserState): TemplateASTNode {
+  const start = state.index;
+
+  // Consume {@
+  consume(state, '{');
+  consume(state, '@');
+
+  const directive = readUntil(state, /[\s(]/);
+
+  if (directive === 'render') {
+    return parseRenderBlock(state, start);
+  }
+
+  // For now, just consume unsupported @ directives and return a text node
+  // In the future, we can add support for {@const}, {@html}, {@debug}
+  const content = readUntil(state, '}');
+  consume(state, '}');
+
+  return {
+    type: 'Text',
+    data: `{@${directive} ${content}}`,
+    start,
+    end: state.index
+  };
+}
+
+/**
+ * Parse {@render snippet()} directive
+ */
+function parseRenderBlock(state: ParserState, start: number): RenderBlockASTNode {
+  skipWhitespace(state);
+
+  // Read the entire expression including the function call
+  const expr = readUntil(state, '}');
+  consume(state, '}');
+
+  // Defensive: validate expression
+  if (!expr || expr.trim().length === 0) {
+    throw new CompilerError(
+      'Empty @render expression',
+      { line: 0, column: start },
+      undefined,
+      'INVALID_SYNTAX'
+    );
+  }
+
+  // Parse the expression to extract snippet name and args
+  let snippet = '';
+  let args: any[] = [];
+  let fullExpression: any;
+
+  try {
+    const parsed = parseExpression(expr.trim());
+    fullExpression = parsed;
+
+    // Acorn wraps expressions in a Program node
+    let actualExpr = parsed;
+    if (parsed.type === 'Program' && parsed.body && parsed.body.length > 0) {
+      const firstStatement = parsed.body[0];
+      if (firstStatement.type === 'ExpressionStatement') {
+        actualExpr = firstStatement.expression;
+      }
+    }
+
+    // Extract snippet name and args from the call expression
+    if (actualExpr.type === 'CallExpression') {
+      if (actualExpr.callee.type === 'Identifier') {
+        snippet = actualExpr.callee.name;
+      }
+      args = actualExpr.arguments || [];
+    } else if (actualExpr.type === 'Identifier') {
+      // Simple case: {@render children}
+      snippet = actualExpr.name;
+    } else {
+      throw new Error('Invalid render expression - expected identifier or call expression');
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new CompilerError(
+      `Invalid @render expression: ${expr} - ${errorMessage}`,
+      { line: 0, column: start },
+      undefined,
+      'INVALID_EXPRESSION'
+    );
+  }
+
+  return {
+    type: 'RenderBlock',
+    expression: fullExpression,
+    snippet,
+    args: args.length > 0 ? args : undefined,
+    start,
+    end: state.index
+  };
 }
 
 /**

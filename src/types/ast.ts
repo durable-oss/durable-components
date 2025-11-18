@@ -32,6 +32,26 @@ export interface ScriptBlock extends BaseNode {
   type: 'ScriptBlock';
   content: string;
   ast: AcornNode; // JavaScript AST from Acorn
+  lang?: string; // Language attribute (e.g., 'ts' for TypeScript)
+  imports?: ImportDeclaration[]; // Extracted import statements
+}
+
+/**
+ * Import Declaration
+ */
+export interface ImportDeclaration extends BaseNode {
+  type: 'ImportDeclaration';
+  source: string; // Module path
+  specifiers: ImportSpecifier[];
+}
+
+/**
+ * Import Specifier
+ */
+export interface ImportSpecifier {
+  type: 'default' | 'named' | 'namespace';
+  local: string; // Local binding name
+  imported?: string; // Original name (for named imports)
 }
 
 /**
@@ -61,7 +81,8 @@ export type TemplateASTNodeType =
   | 'MustacheTag'
   | 'IfBlock'
   | 'EachBlock'
-  | 'Slot';
+  | 'Slot'
+  | 'RenderBlock';
 
 /**
  * Base Template AST Node
@@ -201,6 +222,16 @@ export interface SlotASTNode extends BaseTemplateNode {
 }
 
 /**
+ * Render block (e.g., {@render children()})
+ */
+export interface RenderBlockASTNode extends BaseTemplateNode {
+  type: 'RenderBlock';
+  expression: AcornNode; // Snippet call expression
+  snippet: string; // Snippet name
+  args?: AcornNode[]; // Arguments passed to snippet
+}
+
+/**
  * Union type for all template AST nodes
  */
 export type TemplateASTNode =
@@ -209,7 +240,8 @@ export type TemplateASTNode =
   | MustacheTagASTNode
   | IfBlockASTNode
   | EachBlockASTNode
-  | SlotASTNode;
+  | SlotASTNode
+  | RenderBlockASTNode;
 
 /**
  * Complete Durable Component AST (D-AST)

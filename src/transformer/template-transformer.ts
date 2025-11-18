@@ -10,7 +10,8 @@ import type {
   TextASTNode,
   MustacheTagASTNode,
   IfBlockASTNode,
-  EachBlockASTNode
+  EachBlockASTNode,
+  RenderBlockASTNode
 } from '../types/ast';
 import type {
   TemplateNode,
@@ -19,6 +20,7 @@ import type {
   ExpressionNode,
   IfNode,
   EachNode,
+  RenderNode,
   AttributeBinding
 } from '../types/ir';
 
@@ -124,6 +126,8 @@ function transformNode(node: TemplateASTNode): TemplateNode {
           children: fallback
         };
       }
+      case 'RenderBlock':
+        return transformRenderBlock(node);
       default:
         // Defensive: warn about unknown node type
         const unknownType = (node as any).type;
@@ -269,6 +273,33 @@ function transformEachBlock(node: EachBlockASTNode): EachNode {
     itemName: node.context,
     indexName: node.index,
     children: node.children.map(transformNode)
+  };
+}
+
+/**
+ * Transform render block
+ */
+function transformRenderBlock(node: RenderBlockASTNode): RenderNode {
+  // Defensive: validate input
+  if (!node || typeof node !== 'object') {
+    throw new TypeError('transformRenderBlock: node must be an object');
+  }
+  if (node.type !== 'RenderBlock') {
+    throw new Error(`transformRenderBlock: expected RenderBlock node, got "${node.type}"`);
+  }
+  if (typeof node.snippet !== 'string') {
+    throw new TypeError('transformRenderBlock: node.snippet must be a string');
+  }
+
+  // Extract args expressions
+  const args = node.args && Array.isArray(node.args)
+    ? node.args.map((arg: any) => extractExpression(arg))
+    : undefined;
+
+  return {
+    type: 'render',
+    snippet: node.snippet,
+    args
   };
 }
 

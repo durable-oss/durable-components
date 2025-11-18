@@ -69,7 +69,8 @@ export function parse(source: string, options: ParseOptions = {}): DurableCompon
           );
         }
         // Parse even if empty (tests expect this)
-        ast.script = parseScript(scriptBlock.content, scriptBlock.start);
+        const lang = scriptBlock.attributes?.lang;
+        ast.script = parseScript(scriptBlock.content, scriptBlock.start, lang);
       }
     }
 
@@ -135,7 +136,7 @@ export function parse(source: string, options: ParseOptions = {}): DurableCompon
 /**
  * Parse <script> block
  */
-function parseScript(content: string, start: number): ScriptBlock {
+function parseScript(content: string, start: number, lang?: string): ScriptBlock {
   // Defensive: validate inputs
   if (typeof content !== 'string') {
     throw new TypeError('parseScript: content must be a string');
@@ -161,7 +162,9 @@ function parseScript(content: string, start: number): ScriptBlock {
   }
 
   try {
-    // Parse JavaScript with Acorn
+    // Parse JavaScript/TypeScript with Acorn
+    // Note: Acorn doesn't natively support TypeScript syntax, but for now
+    // we'll parse it as JavaScript and preserve the lang attribute
     const ast = acornParse(content, {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -194,6 +197,7 @@ function parseScript(content: string, start: number): ScriptBlock {
       type: 'ScriptBlock',
       content: content, // Don't trim - AST positions are relative to this
       ast,
+      lang,
       start,
       end
     };

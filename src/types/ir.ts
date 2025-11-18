@@ -14,6 +14,18 @@
 import type { Node, Parent, Data } from 'unist';
 
 /**
+ * Import Definition
+ */
+export interface ImportDefinition {
+  source: string; // Module path
+  specifiers: {
+    type: 'default' | 'named' | 'namespace';
+    local: string; // Local binding name
+    imported?: string; // Original name (for named imports)
+  }[];
+}
+
+/**
  * Component Property Definition
  */
 export interface PropDefinition {
@@ -59,7 +71,7 @@ export interface FunctionDefinition {
 /**
  * Template Node Types
  */
-export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'slot';
+export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'slot' | 'render';
 
 /**
  * Base Template Node (unist-compatible)
@@ -138,6 +150,15 @@ export interface SlotNode extends BaseTemplateNode, Parent {
 }
 
 /**
+ * Render Node (snippet rendering like {@render children()})
+ */
+export interface RenderNode extends BaseTemplateNode {
+  type: 'render';
+  snippet: string; // Snippet name to render
+  args?: string[]; // Arguments passed to snippet
+}
+
+/**
  * Union type for all template nodes
  */
 export type TemplateNode =
@@ -146,7 +167,8 @@ export type TemplateNode =
   | ExpressionNode
   | IfNode
   | EachNode
-  | SlotNode;
+  | SlotNode
+  | RenderNode;
 
 /**
  * Complete Durable Component IR
@@ -165,6 +187,12 @@ export interface DurableComponentIR extends Node {
 
   /** Component name (derived from filename) */
   name: string;
+
+  /** Script language (e.g., 'ts' for TypeScript) */
+  lang?: string;
+
+  /** External module imports */
+  imports?: ImportDefinition[];
 
   /** Component properties (inputs) */
   props: PropDefinition[];

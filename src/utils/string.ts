@@ -8,7 +8,7 @@
 export function extractBlockContent(
   source: string,
   tagName: string
-): { content: string; start: number; end: number } | null {
+): { content: string; start: number; end: number; attributes?: Record<string, string> } | null {
   // Defensive: validate inputs
   if (typeof source !== 'string') {
     throw new TypeError('extractBlockContent: source must be a string');
@@ -46,6 +46,9 @@ export function extractBlockContent(
     throw new Error(`extractBlockContent: invalid index ${openEnd} for source length ${source.length}`);
   }
 
+  // Extract attributes from opening tag
+  const attributes = extractTagAttributes(openMatch[0]);
+
   const remaining = source.slice(openEnd);
 
   const closeMatch = remaining.match(closePattern);
@@ -64,8 +67,37 @@ export function extractBlockContent(
   return {
     content: remaining.slice(0, closeMatch.index),
     start: openEnd,
-    end: openEnd + closeMatch.index
+    end: openEnd + closeMatch.index,
+    attributes
   };
+}
+
+/**
+ * Extract attributes from an HTML tag string
+ */
+export function extractTagAttributes(tagString: string): Record<string, string> {
+  // Defensive: validate input
+  if (typeof tagString !== 'string') {
+    throw new TypeError('extractTagAttributes: tagString must be a string');
+  }
+
+  const attributes: Record<string, string> = {};
+
+  // Match attribute patterns: name="value", name='value', or name=value
+  const attrPattern = /(\w+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+
+  let match;
+  while ((match = attrPattern.exec(tagString)) !== null) {
+    const name = match[1];
+    const value = match[2] || match[3] || match[4] || '';
+
+    // Defensive: validate attribute name
+    if (name && name.length > 0) {
+      attributes[name] = value;
+    }
+  }
+
+  return attributes;
 }
 
 /**

@@ -64,11 +64,19 @@ export function transform(ast: DurableComponentAST): DurableComponentIR {
       throw new Error(`transform: invalid script type "${ast.script.type}"`);
     }
 
+    // Extract lang attribute
+    if (ast.script.lang) {
+      ir.lang = ast.script.lang;
+    }
+
     const scriptAnalysis = extractRunesFromScript(ast.script);
 
     // Defensive: validate script analysis result
     if (!scriptAnalysis || typeof scriptAnalysis !== 'object') {
       throw new Error('transform: extractRunesFromScript returned invalid result');
+    }
+    if (!Array.isArray(scriptAnalysis.imports)) {
+      throw new Error('transform: scriptAnalysis.imports must be an array');
     }
     if (!Array.isArray(scriptAnalysis.props)) {
       throw new Error('transform: scriptAnalysis.props must be an array');
@@ -86,6 +94,7 @@ export function transform(ast: DurableComponentAST): DurableComponentIR {
       throw new Error('transform: scriptAnalysis.functions must be an array');
     }
 
+    ir.imports = scriptAnalysis.imports;
     ir.props = scriptAnalysis.props;
     ir.state = scriptAnalysis.state;
     ir.derived = scriptAnalysis.derived;
