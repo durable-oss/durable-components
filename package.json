@@ -1,0 +1,45 @@
+{
+  "name": "@durable/compiler",
+  "version": "0.1.0",
+  "description": "A Durable Component Compiler - compile once, run anywhere",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "dcc": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
+  },
+  "keywords": [
+    "compiler",
+    "durable",
+    "react",
+    "vue",
+    "svelte",
+    "solid",
+    "web-components"
+  ],
+  "author": "Durable Programming",
+  "license": "MIT",
+  "dependencies": {
+    "acorn": "^8.11.3",
+    "commander": "^11.1.0",
+    "magic-string": "^0.30.5",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.0.0",
+    "vfile": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.25",
+    "@vitest/ui": "^4.0.10",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.10"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

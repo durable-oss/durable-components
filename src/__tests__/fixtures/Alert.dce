@@ -1,0 +1,209 @@
+<script>
+  // Props
+  let {
+    variant = 'info',
+    title = '',
+    message = '',
+    dismissible = false,
+    icon = true,
+    onDismiss = null
+  } = $props();
+
+  // State
+  let isVisible = $state(true);
+  let isDismissing = $state(false);
+
+  // Derived
+  let alertClass = $derived(
+    'alert alert-' + variant + (isDismissing ? ' dismissing' : '')
+  );
+
+  let iconSymbol = $derived(
+    variant === 'success' ? '✓' :
+    variant === 'error' ? '✕' :
+    variant === 'warning' ? '⚠' :
+    'ℹ'
+  );
+
+  // Functions
+  function dismiss() {
+    isDismissing = true;
+    setTimeout(() => {
+      isVisible = false;
+      if (onDismiss) {
+        onDismiss();
+      }
+    }, 200);
+  }
+</script>
+
+<template>
+  {#if isVisible}
+    <div class={alertClass} role="alert">
+      {#if icon}
+        <div class="alert-icon">
+          {iconSymbol}
+        </div>
+      {/if}
+
+      <div class="alert-content">
+        {#if title}
+          <div class="alert-title">{title}</div>
+        {/if}
+        {#if message}
+          <div class="alert-message">{message}</div>
+        {:else}
+          <div class="alert-message">
+            <slot></slot>
+          </div>
+        {/if}
+      </div>
+
+      {#if dismissible}
+        <button class="alert-dismiss" on:click={dismiss} aria-label="Dismiss">
+          ✕
+        </button>
+      {/if}
+    </div>
+  {/if}
+</template>
+
+<style>
+  .alert {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid;
+    position: relative;
+    animation: slideIn 0.2s ease-out;
+  }
+
+  .alert.dismissing {
+    animation: slideOut 0.2s ease-in;
+  }
+
+  .alert-icon {
+    font-size: 1.25rem;
+    font-weight: bold;
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .alert-content {
+    flex: 1;
+  }
+
+  .alert-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .alert-message {
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .alert-dismiss {
+    background: transparent;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.25rem;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+
+  /* Info variant */
+  .alert-info {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1e40af;
+  }
+
+  .alert-info .alert-icon {
+    color: #3b82f6;
+  }
+
+  .alert-info .alert-dismiss:hover {
+    background: #dbeafe;
+  }
+
+  /* Success variant */
+  .alert-success {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+    color: #166534;
+  }
+
+  .alert-success .alert-icon {
+    color: #22c55e;
+  }
+
+  .alert-success .alert-dismiss:hover {
+    background: #dcfce7;
+  }
+
+  /* Warning variant */
+  .alert-warning {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+  }
+
+  .alert-warning .alert-icon {
+    color: #f59e0b;
+  }
+
+  .alert-warning .alert-dismiss:hover {
+    background: #fef3c7;
+  }
+
+  /* Error variant */
+  .alert-error {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #991b1b;
+  }
+
+  .alert-error .alert-icon {
+    color: #ef4444;
+  }
+
+  .alert-error .alert-dismiss:hover {
+    background: #fee2e2;
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateY(-10px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideOut {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(-10px);
+      opacity: 0;
+    }
+  }
+</style>

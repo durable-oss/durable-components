@@ -1,0 +1,126 @@
+<script>
+  // Props
+  let {
+    title = '',
+    description = '',
+    footer = '',
+    hoverable = false,
+    clickable = false,
+    onClick = null
+  } = $props();
+
+  // State
+  let isHovered = $state(false);
+  let isExpanded = $state(false);
+
+  // Derived
+  let cardClass = $derived(
+    'card' +
+    (hoverable ? ' hoverable' : '') +
+    (clickable ? ' clickable' : '') +
+    (isHovered ? ' hovered' : '')
+  );
+
+  // Functions
+  function handleClick() {
+    if (clickable && onClick) {
+      onClick();
+    }
+  }
+
+  function handleMouseEnter() {
+    isHovered = true;
+  }
+
+  function handleMouseLeave() {
+    isHovered = false;
+  }
+
+  function toggleExpanded() {
+    isExpanded = !isExpanded;
+  }
+</script>
+
+<template>
+  <div
+    class={cardClass}
+    on:click={handleClick}
+    on:mouseenter={handleMouseEnter}
+    on:mouseleave={handleMouseLeave}
+  >
+    {#if title}
+      <div class="card-header">
+        <h3 class="card-title">{title}</h3>
+        {#if description}
+          <p class="card-description">{description}</p>
+        {/if}
+      </div>
+    {/if}
+
+    <div class="card-content">
+      <slot></slot>
+    </div>
+
+    {#if footer}
+      <div class="card-footer">
+        {footer}
+      </div>
+    {/if}
+  </div>
+</template>
+
+<style>
+  .card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s;
+  }
+
+  .card.hoverable:hover {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  }
+
+  .card.clickable {
+    cursor: pointer;
+  }
+
+  .card.clickable:active {
+    transform: scale(0.99);
+  }
+
+  .card.hovered {
+    border-color: #d1d5db;
+  }
+
+  .card-header {
+    margin-bottom: 1rem;
+  }
+
+  .card-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #111827;
+    margin: 0 0 0.5rem 0;
+  }
+
+  .card-description {
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin: 0;
+  }
+
+  .card-content {
+    color: #374151;
+  }
+
+  .card-footer {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e7eb;
+    font-size: 0.875rem;
+    color: #6b7280;
+  }
+</style>

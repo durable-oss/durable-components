@@ -1,0 +1,190 @@
+<script>
+  // Props with TypeScript-like types and defaults
+  let {
+    variant = 'default',
+    size = 'md',
+    disabled = false,
+    loading = false,
+    onClick = null
+  } = $props();
+
+  // Reactive state
+  let isPressed = $state(false);
+  let clickCount = $state(0);
+
+  // Derived values
+  let variantClass = $derived(
+    variant === 'primary' ? 'btn-primary' :
+    variant === 'secondary' ? 'btn-secondary' :
+    variant === 'outline' ? 'btn-outline' :
+    variant === 'ghost' ? 'btn-ghost' :
+    variant === 'destructive' ? 'btn-destructive' :
+    'btn-default'
+  );
+
+  let sizeClass = $derived(
+    size === 'sm' ? 'btn-sm' :
+    size === 'lg' ? 'btn-lg' :
+    'btn-md'
+  );
+
+  let isDisabled = $derived(disabled || loading);
+
+  let buttonClass = $derived(
+    'btn ' + variantClass + ' ' + sizeClass +
+    (isPressed ? ' pressed' : '') +
+    (loading ? ' loading' : '')
+  );
+
+  // Effects
+  $effect(() => {
+    if (clickCount > 0) {
+      console.log(`Button clicked ${clickCount} times`);
+    }
+  });
+
+  // Functions
+  function handleClick(event) {
+    if (!isDisabled) {
+      clickCount++;
+      if (onClick) {
+        onClick(event);
+      }
+    }
+  }
+
+  function handleMouseDown() {
+    isPressed = true;
+  }
+
+  function handleMouseUp() {
+    isPressed = false;
+  }
+</script>
+
+<template>
+  <button
+    class={buttonClass}
+    disabled={isDisabled}
+    on:click={handleClick}
+    on:mousedown={handleMouseDown}
+    on:mouseup={handleMouseUp}
+  >
+    {#if loading}
+      <span class="spinner"></span>
+    {/if}
+    <slot></slot>
+  </button>
+</template>
+
+<style>
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: 1px solid transparent;
+    outline: none;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn.pressed {
+    transform: scale(0.98);
+  }
+
+  /* Sizes */
+  .btn-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  .btn-md {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+  }
+
+  .btn-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 1.125rem;
+  }
+
+  /* Variants */
+  .btn-default {
+    background: #f3f4f6;
+    color: #1f2937;
+  }
+
+  .btn-default:hover:not(:disabled) {
+    background: #e5e7eb;
+  }
+
+  .btn-primary {
+    background: #3b82f6;
+    color: white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: #2563eb;
+  }
+
+  .btn-secondary {
+    background: #6b7280;
+    color: white;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: #4b5563;
+  }
+
+  .btn-outline {
+    background: transparent;
+    border-color: #d1d5db;
+    color: #1f2937;
+  }
+
+  .btn-outline:hover:not(:disabled) {
+    background: #f3f4f6;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: #1f2937;
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: #f3f4f6;
+  }
+
+  .btn-destructive {
+    background: #ef4444;
+    color: white;
+  }
+
+  .btn-destructive:hover:not(:disabled) {
+    background: #dc2626;
+  }
+
+  /* Loading spinner */
+  .spinner {
+    width: 1em;
+    height: 1em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+</style>

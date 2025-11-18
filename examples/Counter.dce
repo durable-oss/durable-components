@@ -1,0 +1,87 @@
+<script>
+  let { initialCount = 0 } = $props();
+  let count = $state(initialCount);
+  let doubled = $derived(count * 2);
+
+  function increment() {
+    count++;
+  }
+
+  function decrement() {
+    count--;
+  }
+
+  $effect(() => {
+    console.log('Count changed to:', count);
+  });
+</script>
+
+<template>
+  <div class="counter">
+    <h2>Counter Component</h2>
+    <div class="display">
+      <p>Count: {count}</p>
+      <p>Doubled: {doubled}</p>
+    </div>
+    <div class="buttons">
+      <button on:click={decrement}>-</button>
+      <button on:click={increment}>+</button>
+    </div>
+  </div>
+</template>
+
+<style>
+  .counter {
+    padding: 2rem;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    max-width: 400px;
+    margin: 2rem auto;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  }
+
+  h2 {
+    margin: 0 0 1rem 0;
+    text-align: center;
+  }
+
+  .display {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+  }
+
+  .display p {
+    margin: 0.5rem 0;
+    font-size: 1.2rem;
+  }
+
+  .buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+  }
+
+  button {
+    padding: 0.75rem 2rem;
+    background: white;
+    color: #667eea;
+    border: none;
+    border-radius: 4px;
+    font-size: 1.5rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  }
+
+  button:active {
+    transform: translateY(0);
+  }
+</style>

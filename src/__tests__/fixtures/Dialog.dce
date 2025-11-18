@@ -1,0 +1,213 @@
+<script>
+  // Props
+  let {
+    open = false,
+    title = '',
+    description = '',
+    showClose = true,
+    onClose = null,
+    onOpenChange = null
+  } = $props();
+
+  // State
+  let isOpen = $state(open);
+  let isAnimating = $state(false);
+
+  // Derived
+  let dialogClass = $derived(
+    'dialog' +
+    (isOpen ? ' open' : '') +
+    (isAnimating ? ' animating' : '')
+  );
+
+  // Effects
+  $effect(() => {
+    if (isOpen !== open) {
+      isOpen = open;
+    }
+  });
+
+  $effect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+  });
+
+  // Functions
+  function close() {
+    isAnimating = true;
+    setTimeout(() => {
+      isOpen = false;
+      isAnimating = false;
+      if (onClose) {
+        onClose();
+      }
+      if (onOpenChange) {
+        onOpenChange(false);
+      }
+    }, 200);
+  }
+
+  function handleOverlayClick(event) {
+    if (event.target.classList.contains('dialog-overlay')) {
+      close();
+    }
+  }
+
+  function handleEscape(event) {
+    if (event.key === 'Escape' && isOpen) {
+      close();
+    }
+  }
+</script>
+
+<template>
+  {#if isOpen}
+    <div class="dialog-overlay" on:click={handleOverlayClick}>
+      <div class={dialogClass} role="dialog" aria-modal="true">
+        <div class="dialog-header">
+          {#if title}
+            <h2 class="dialog-title">{title}</h2>
+          {/if}
+          {#if description}
+            <p class="dialog-description">{description}</p>
+          {/if}
+          {#if showClose}
+            <button class="dialog-close" on:click={close} aria-label="Close">
+              ×
+            </button>
+          {/if}
+        </div>
+
+        <div class="dialog-content">
+          <slot></slot>
+        </div>
+
+        <div class="dialog-footer">
+          <slot name="footer"></slot>
+        </div>
+      </div>
+    </div>
+  {/if}
+</template>
+
+<style>
+  .dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  .dialog {
+    background: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow: auto;
+    animation: slideIn 0.2s ease-out;
+    position: relative;
+  }
+
+  .dialog.animating {
+    animation: slideOut 0.2s ease-in;
+  }
+
+  .dialog-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid #e5e7eb;
+    position: relative;
+  }
+
+  .dialog-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #111827;
+    margin: 0 2rem 0 0;
+  }
+
+  .dialog-description {
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin: 0.5rem 0 0 0;
+  }
+
+  .dialog-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: transparent;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 0.25rem;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.25rem;
+    transition: all 0.2s;
+  }
+
+  .dialog-close:hover {
+    background: #f3f4f6;
+    color: #111827;
+  }
+
+  .dialog-content {
+    padding: 1.5rem;
+  }
+
+  .dialog-footer {
+    padding: 1.5rem;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateY(-20px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideOut {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(-20px);
+      opacity: 0;
+    }
+  }
+</style>
