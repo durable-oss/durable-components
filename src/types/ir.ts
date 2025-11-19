@@ -78,6 +78,13 @@ export interface FunctionDefinition {
 }
 
 /**
+ * Element Reference Definition (for bind:this)
+ */
+export interface RefDefinition {
+  name: string; // Variable name for the ref
+}
+
+/**
  * Template Node Types
  */
 export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug';
@@ -256,6 +263,9 @@ export interface DurableComponentIR extends Node {
   /** Side effects */
   effects: EffectDefinition[];
 
+  /** Element references (bind:this) */
+  refs: RefDefinition[];
+
   /** Event handlers and helper functions */
   functions: FunctionDefinition[];
 
@@ -287,6 +297,7 @@ export function createEmptyIR(name: string): DurableComponentIR {
     state: [],
     derived: [],
     effects: [],
+    refs: [],
     functions: [],
     template: {
       type: 'element',

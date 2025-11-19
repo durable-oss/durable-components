@@ -476,6 +476,94 @@ function parseKeyBlock(state: ParserState, start: number): KeyBlockASTNode {
 }
 
 /**
+ * Parse else/else-if chain (helper for parseIfBlock)
+ */
+function parseElseChain(state: ParserState): any {
+  const checkpoint = state.index;
+  consume(state, '{');
+  consume(state, ':');
+  const directive = readUntil(state, /[}\s]/);
+
+  if (directive !== 'else') {
+    state.index = checkpoint;
+    return undefined;
+  }
+
+  skipWhitespace(state);
+
+  // Check if this is {:else if} instead of just {:else}
+  if (peek(state) === 'i' && peek(state, 1) === 'f' && /\s/.test(peek(state, 2))) {
+    // This is {:else if condition}
+    consume(state, 'i');
+    consume(state, 'f');
+    skipWhitespace(state);
+
+    // Parse the else-if condition
+    const elseIfCondition = readUntil(state, '}');
+    consume(state, '}');
+
+    const elseIfConditionAST = parseExpression(elseIfCondition);
+
+    // Parse else-if children
+    const elseIfChildren: TemplateASTNode[] = [];
+    let nestedElse = undefined;
+
+    while (state.index < state.input.length) {
+      if (peek(state) === '{') {
+        const innerCheckpoint = state.index;
+
+        if (peek(state, 1) === ':') {
+          // This might be another {:else if} or {:else}
+          nestedElse = parseElseChain(state);
+          break;
+        } else if (peek(state, 1) === '/') {
+          // End of if block
+          state.index = innerCheckpoint;
+          break;
+        }
+      }
+
+      const node = parseNode(state);
+      if (node) elseIfChildren.push(node);
+    }
+
+    return {
+      type: 'ElseBlock' as const,
+      children: [{
+        type: 'IfBlock' as const,
+        expression: elseIfConditionAST,
+        children: elseIfChildren,
+        else: nestedElse,
+        start: checkpoint,
+        end: state.index
+      }],
+      start: checkpoint,
+      end: state.index
+    };
+  } else {
+    // Just {:else} without if
+    consume(state, '}');
+
+    // Parse else children
+    const elseChildren: TemplateASTNode[] = [];
+    while (state.index < state.input.length) {
+      if (peek(state) === '{' && peek(state, 1) === '/') {
+        break;
+      }
+      const node = parseNode(state);
+      if (node) elseChildren.push(node);
+    }
+
+    return {
+      type: 'ElseBlock' as const,
+      children: elseChildren,
+      start: checkpoint,
+      end: state.index
+    };
+  }
+}
+
+/**
  * Parse {#if} block
  */
 function parseIfBlock(state: ParserState, start: number): IfBlockASTNode {
@@ -501,36 +589,205 @@ function parseIfBlock(state: ParserState, start: number): IfBlockASTNode {
         consume(state, ':');
         const directive = readUntil(state, /[}\s]/);
         if (directive === 'else') {
-          consume(state, '}');
-          // Parse else children
-          const elseChildren: TemplateASTNode[] = [];
-          while (state.index < state.input.length) {
-            if (peek(state) === '{' && peek(state, 1) === '/') {
-              break;
+          skipWhitespace(state);
+
+          // Check if this is {:else if} instead of just {:else}
+          if (peek(state) === 'i' && peek(state, 1) === 'f' && /\s/.test(peek(state, 2))) {
+            // This is {:else if condition}
+            consume(state, 'i');
+            consume(state, 'f');
+            skipWhitespace(state);
+
+            // Parse the else-if condition
+            const elseIfCondition = readUntil(state, '}');
+            consume(state, '}');
+
+            const elseIfConditionAST = parseExpression(elseIfCondition);
+
+            // Parse else-if children
+            const elseIfChildren: TemplateASTNode[] = [];
+            let elseIfElse = undefined;
+
+            while (state.index < state.input.length) {
+              if (peek(state) === '{') {
+                const elseIfCheckpoint = state.index;
+                consume(state, '{');
+
+                if (peek(state) === ':') {
+                  consume(state, ':');
+                  const elseIfDirective = readUntil(state, /[}\s]/);
+
+                  if (elseIfDirective === 'else') {
+                    skipWhitespace(state);
+
+                    // Check if another else-if or final else
+                    if (peek(state) === 'i' && peek(state, 1) === 'f' && /\s/.test(peek(state, 2))) {
+                      // Another {:else if} - rewind and let it be parsed recursively
+                      state.index = elseIfCheckpoint;
+                      break;
+                    } else {
+                      // Final {:else}
+                      consume(state, '}');
+
+                      // Parse final else children
+                      const finalElseChildren: TemplateASTNode[] = [];
+                      while (state.index < state.input.length) {
+                        if (peek(state) === '{' && peek(state, 1) === '/') {
+                          break;
+                        }
+                        const node = parseNode(state);
+                        if (node) finalElseChildren.push(node);
+                      }
+
+                      elseIfElse = {
+                        type: 'ElseBlock' as const,
+                        children: finalElseChildren,
+                        start: elseIfCheckpoint,
+                        end: state.index
+                      };
+                      break;
+                    }
+                  }
+                }
+
+                if (peek(state) === '/') {
+                  consume(state, '/');
+                  expect(state, 'if');
+                  consume(state, '}');
+
+                  // Wrap the else-if as a nested if block in the else clause
+                  return {
+                    type: 'IfBlock' as const,
+                    expression: conditionAST,
+                    children,
+                    else: {
+                      type: 'ElseBlock' as const,
+                      children: [{
+                        type: 'IfBlock' as const,
+                        expression: elseIfConditionAST,
+                        children: elseIfChildren,
+                        else: elseIfElse,
+                        start: checkpoint,
+                        end: state.index
+                      }],
+                      start: checkpoint,
+                      end: state.index
+                    },
+                    start,
+                    end: state.index
+                  };
+                }
+
+                // Not a closing tag, rewind and parse as normal node
+                state.index = elseIfCheckpoint;
+              }
+
+              const node = parseNode(state);
+              if (node) elseIfChildren.push(node);
             }
-            const node = parseNode(state);
-            if (node) elseChildren.push(node);
-          }
 
-          // Consume {/if}
-          consume(state, '{');
-          consume(state, '/');
-          expect(state, 'if');
-          consume(state, '}');
+            // If we broke out due to another {:else if}, handle it recursively
+            if (peek(state) === '{' && peek(state, 1) === ':') {
+              const recursiveCheckpoint = state.index;
+              consume(state, '{');
+              consume(state, ':');
+              const recursiveDirective = readUntil(state, /[}\s]/);
 
-          return {
-            type: 'IfBlock',
-            expression: conditionAST,
-            children,
-            else: {
-              type: 'ElseBlock',
-              children: elseChildren,
-              start: checkpoint,
+              if (recursiveDirective === 'else') {
+                // Rewind to parse this recursively
+                state.index = recursiveCheckpoint;
+
+                // Parse remaining else/else-if chain
+                const remainingElse = parseElseChain(state);
+
+                // Consume {/if}
+                consume(state, '{');
+                consume(state, '/');
+                expect(state, 'if');
+                consume(state, '}');
+
+                return {
+                  type: 'IfBlock' as const,
+                  expression: conditionAST,
+                  children,
+                  else: {
+                    type: 'ElseBlock' as const,
+                    children: [{
+                      type: 'IfBlock' as const,
+                      expression: elseIfConditionAST,
+                      children: elseIfChildren,
+                      else: remainingElse,
+                      start: checkpoint,
+                      end: state.index
+                    }],
+                    start: checkpoint,
+                    end: state.index
+                  },
+                  start,
+                  end: state.index
+                };
+              }
+            }
+
+            // No more else/else-if, consume {/if}
+            consume(state, '{');
+            consume(state, '/');
+            expect(state, 'if');
+            consume(state, '}');
+
+            return {
+              type: 'IfBlock' as const,
+              expression: conditionAST,
+              children,
+              else: {
+                type: 'ElseBlock' as const,
+                children: [{
+                  type: 'IfBlock' as const,
+                  expression: elseIfConditionAST,
+                  children: elseIfChildren,
+                  else: elseIfElse,
+                  start: checkpoint,
+                  end: state.index
+                }],
+                start: checkpoint,
+                end: state.index
+              },
+              start,
               end: state.index
-            },
-            start,
-            end: state.index
-          };
+            };
+          } else {
+            // Just {:else} without if
+            consume(state, '}');
+            // Parse else children
+            const elseChildren: TemplateASTNode[] = [];
+            while (state.index < state.input.length) {
+              if (peek(state) === '{' && peek(state, 1) === '/') {
+                break;
+              }
+              const node = parseNode(state);
+              if (node) elseChildren.push(node);
+            }
+
+            // Consume {/if}
+            consume(state, '{');
+            consume(state, '/');
+            expect(state, 'if');
+            consume(state, '}');
+
+            return {
+              type: 'IfBlock' as const,
+              expression: conditionAST,
+              children,
+              else: {
+                type: 'ElseBlock' as const,
+                children: elseChildren,
+                start: checkpoint,
+                end: state.index
+              },
+              start,
+              end: state.index
+            };
+          }
         }
       }
 
@@ -550,7 +807,7 @@ function parseIfBlock(state: ParserState, start: number): IfBlockASTNode {
   }
 
   return {
-    type: 'IfBlock',
+    type: 'IfBlock' as const,
     expression: conditionAST,
     children,
     start,
@@ -712,6 +969,25 @@ function parseElement(state: ParserState): ElementASTNode {
  */
 function parseAttribute(state: ParserState): TemplateAttribute | null {
   const start = state.index;
+
+  // Check for shorthand prop syntax: {propName}
+  if (peek(state) === '{') {
+    consume(state, '{');
+    const propName = readUntil(state, '}');
+    consume(state, '}');
+
+    if (propName && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName)) {
+      // This is shorthand syntax - expand it to propName={propName}
+      return {
+        type: 'Attribute',
+        name: propName,
+        value: [{ type: 'MustacheTag', expression: parseExpression(propName) }],
+        start,
+        end: state.index
+      };
+    }
+  }
+
   const name = readUntil(state, /[=\s/>]/);
 
   if (!name) return null;

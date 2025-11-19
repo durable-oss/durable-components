@@ -154,6 +154,11 @@ function generateComponent(ir: DurableComponentIR, ctx: GeneratorContext): strin
     body.push(generateStateDeclarations(ir, ctx));
   }
 
+  // Generate element refs (SolidJS uses simple let declarations)
+  if (ir.refs && ir.refs.length > 0) {
+    body.push(generateRefDeclarations(ir, ctx));
+  }
+
   // Generate derived/computed values (createMemo)
   if (ir.derived.length > 0) {
     ctx.usedPrimitives.add('createMemo');
@@ -213,6 +218,19 @@ function generateStateDeclarations(ir: DurableComponentIR, ctx: GeneratorContext
     }
 
     return `const [${state.name}, ${setterName}] = createSignal(${initialValue});`;
+  });
+
+  return declarations.join('\n');
+}
+
+/**
+ * Generate ref declarations (SolidJS uses simple let declarations)
+ */
+function generateRefDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
+  if (!ir.refs || ir.refs.length === 0) return '';
+
+  const declarations = ir.refs.map((ref) => {
+    return `let ${ref.name};`;
   });
 
   return declarations.join('\n');
@@ -370,6 +388,10 @@ function generateElementJSX(
       const eventName = 'on' + capitalize(attr.name.slice(3));
       const handler = attr.value.replace('functions.', '');
       props.push(`${eventName}={${handler}}`);
+    } else if (attr.name === 'bind:this') {
+      // Element reference: bind:this={element} -> ref={element}
+      const varName = attr.value.replace('state.', '');
+      props.push(`ref={${varName}}`);
     } else if (attr.name.startsWith('bind:')) {
       // Two-way binding: bind:value
       const propName = attr.name.slice(5);

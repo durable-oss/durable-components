@@ -148,6 +148,12 @@ function generateComponent(ir: DurableComponentIR, ctx: GeneratorContext): strin
     body.push(generateStateDeclarations(ir, ctx));
   }
 
+  // Generate element refs
+  if (ir.refs && ir.refs.length > 0) {
+    ctx.usedHooks.add('useRef');
+    body.push(generateRefDeclarations(ir, ctx));
+  }
+
   // Generate derived/computed values
   if (ir.derived.length > 0) {
     ctx.usedHooks.add('useMemo');
@@ -206,6 +212,19 @@ function generateStateDeclarations(ir: DurableComponentIR, ctx: GeneratorContext
     }
 
     return `const [${state.name}, ${setterName}] = useState(${initialValue});`;
+  });
+
+  return declarations.join('\n');
+}
+
+/**
+ * Generate useRef declarations for element references
+ */
+function generateRefDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
+  if (!ir.refs || ir.refs.length === 0) return '';
+
+  const declarations = ir.refs.map((ref) => {
+    return `const ${ref.name} = useRef(null);`;
   });
 
   return declarations.join('\n');
@@ -324,10 +343,22 @@ function generateElementJSX(
   // Handle bindings
   for (const [key, value] of Object.entries(bindings)) {
     const valueStr = String(value);
+    const transformedValue = transformExpression(valueStr, {} as any);
+
     if (key === 'class') {
-      props.push(`className=${transformExpression(valueStr, {} as any)}`);
+      // Check if it's a static string (wrapped in quotes)
+      if (transformedValue.startsWith('"') && transformedValue.endsWith('"')) {
+        props.push(`className=${transformedValue}`);
+      } else {
+        props.push(`className={${transformedValue}}`);
+      }
     } else {
-      props.push(`${key}=${transformExpression(valueStr, {} as any)}`);
+      // Check if it's a static string (wrapped in quotes)
+      if (transformedValue.startsWith('"') && transformedValue.endsWith('"')) {
+        props.push(`${key}=${transformedValue}`);
+      } else {
+        props.push(`${key}={${transformedValue}}`);
+      }
     }
   }
 
@@ -338,6 +369,10 @@ function generateElementJSX(
       const eventName = 'on' + capitalize(attr.name.slice(3));
       const handler = attr.value.replace('functions.', '');
       props.push(`${eventName}={${handler}}`);
+    } else if (attr.name === 'bind:this') {
+      // Element reference: bind:this={inputElement} -> ref={inputElement}
+      const varName = attr.value.replace('state.', '');
+      props.push(`ref={${varName}}`);
     } else if (attr.name.startsWith('bind:')) {
       // Two-way binding: bind:value
       const propName = attr.name.slice(5);
@@ -351,6 +386,20 @@ function generateElementJSX(
     } else if (attr.name.startsWith('class:')) {
       // Class directive: class:active={isActive}
       // For now, skip these (would need className logic)
+    } else {
+      // Regular attribute
+      const attrName = attr.name === 'class' ? 'className' : attr.name;
+      const attrValue = attr.value.replace(/^(state|props|derived)\./, '');
+
+      // Check if value looks like a variable reference (needs braces)
+      // If it's already a string, keep it as a string
+      if (attrValue && attrValue !== 'true' && attrValue !== 'false' && !attrValue.match(/^["'].*["']$/)) {
+        props.push(`${attrName}={${attrValue}}`);
+      } else if (attrValue === 'true' || attrValue === 'false') {
+        props.push(`${attrName}={${attrValue}}`);
+      } else {
+        props.push(`${attrName}=${attrValue}`);
+      }
     }
   }
 

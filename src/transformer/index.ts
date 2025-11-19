@@ -7,7 +7,7 @@
  */
 
 import type { DurableComponentAST } from '../types/ast';
-import type { DurableComponentIR } from '../types/ir';
+import type { DurableComponentIR, TemplateNode, RefDefinition } from '../types/ir';
 import { createEmptyIR } from '../types/ir';
 import { filenameToComponentName } from '../utils/string';
 import { extractRunesFromScript } from './script-analyzer';
@@ -127,6 +127,9 @@ export function transform(ast: DurableComponentAST): DurableComponentIR {
     }
 
     ir.template = transformedTemplate;
+
+    // Extract refs from template (bind:this directives)
+    ir.refs = extractRefsFromTemplate(ir.template);
   }
 
   // Extract styles
@@ -154,4 +157,62 @@ export function transform(ast: DurableComponentAST): DurableComponentIR {
   }
 
   return ir;
+}
+
+/**
+ * Extract element references (bind:this) from template tree
+ */
+function extractRefsFromTemplate(template: TemplateNode): RefDefinition[] {
+  const refs = new Set<string>();
+
+  function walk(node: TemplateNode): void {
+    if (!node || typeof node !== 'object') return;
+
+    // Check if this is an element node with attributes
+    if (node.type === 'element' && 'attributes' in node) {
+      const element = node as any;
+      if (Array.isArray(element.attributes)) {
+        for (const attr of element.attributes) {
+          if (attr && attr.name === 'bind:this' && typeof attr.value === 'string') {
+            // Extract ref name from value (remove 'state.' prefix if present)
+            const refName = attr.value.replace(/^state\./, '');
+            refs.add(refName);
+          }
+        }
+      }
+
+      // Walk children
+      if (Array.isArray(element.children)) {
+        for (const child of element.children) {
+          walk(child);
+        }
+      }
+    }
+
+    // Walk children for nodes with children property
+    if ('children' in node && Array.isArray((node as any).children)) {
+      for (const child of (node as any).children) {
+        walk(child);
+      }
+    }
+
+    // Walk consequent and alternate for if nodes
+    if (node.type === 'if') {
+      const ifNode = node as any;
+      if (Array.isArray(ifNode.consequent)) {
+        for (const child of ifNode.consequent) {
+          walk(child);
+        }
+      }
+      if (Array.isArray(ifNode.alternate)) {
+        for (const child of ifNode.alternate) {
+          walk(child);
+        }
+      }
+    }
+  }
+
+  walk(template);
+
+  return Array.from(refs).map(name => ({ name }));
 }

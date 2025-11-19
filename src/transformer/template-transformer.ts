@@ -383,7 +383,9 @@ function extractExpression(node: any): string {
     if (n.type === 'UnaryExpression') {
       const argument = extract(n.argument, depth + 1);
       const operator = typeof n.operator === 'string' ? n.operator : '?';
-      return `${operator}${argument}`;
+      // Operators like 'typeof', 'void', 'delete' need a space
+      const needsSpace = /^[a-z]+$/.test(operator);
+      return needsSpace ? `${operator} ${argument}` : `${operator}${argument}`;
     }
 
     // Handle literal
@@ -431,6 +433,70 @@ function extractExpression(node: any): string {
       const operator = typeof n.operator === 'string' ? n.operator : '?';
       const prefix = typeof n.prefix === 'boolean' ? n.prefix : false;
       return prefix ? `${operator}${argument}` : `${argument}${operator}`;
+    }
+
+    // Handle conditional expression (ternary)
+    if (n.type === 'ConditionalExpression') {
+      const test = extract(n.test, depth + 1);
+      const consequent = extract(n.consequent, depth + 1);
+      const alternate = extract(n.alternate, depth + 1);
+      return `${test} ? ${consequent} : ${alternate}`;
+    }
+
+    // Handle logical expression (&&, ||, ??)
+    if (n.type === 'LogicalExpression') {
+      const left = extract(n.left, depth + 1);
+      const right = extract(n.right, depth + 1);
+      const operator = typeof n.operator === 'string' ? n.operator : '?';
+      return `${left} ${operator} ${right}`;
+    }
+
+    // Handle template literal
+    if (n.type === 'TemplateLiteral') {
+      const quasis = Array.isArray(n.quasis) ? n.quasis : [];
+      const expressions = Array.isArray(n.expressions) ? n.expressions : [];
+
+      let result = '`';
+      for (let i = 0; i < quasis.length; i++) {
+        const quasi = quasis[i];
+        // Add the raw string value
+        if (quasi && typeof quasi.value === 'object' && typeof quasi.value.raw === 'string') {
+          result += quasi.value.raw;
+        } else if (quasi && typeof quasi.value === 'object' && typeof quasi.value.cooked === 'string') {
+          result += quasi.value.cooked;
+        }
+
+        // Add the expression if there is one
+        if (i < expressions.length && expressions[i]) {
+          result += '${' + extract(expressions[i], depth + 1) + '}';
+        }
+      }
+      result += '`';
+      return result;
+    }
+
+    // Handle array expression
+    if (n.type === 'ArrayExpression') {
+      const elements = Array.isArray(n.elements)
+        ? n.elements.map((el: any) => el ? extract(el, depth + 1) : '').join(', ')
+        : '';
+      return `[${elements}]`;
+    }
+
+    // Handle object expression
+    if (n.type === 'ObjectExpression') {
+      const properties = Array.isArray(n.properties)
+        ? n.properties.map((prop: any) => {
+            if (!prop) return '';
+            if (prop.type === 'Property') {
+              const key = prop.key ? extract(prop.key, depth + 1) : '';
+              const value = prop.value ? extract(prop.value, depth + 1) : '';
+              return `${key}: ${value}`;
+            }
+            return '';
+          }).filter(Boolean).join(', ')
+        : '';
+      return `{${properties}}`;
     }
 
     // Fallback
