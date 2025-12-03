@@ -1,5 +1,5 @@
 {
-  "name": "@durable/compiler",
+  "name": "durable-components",
   "version": "0.1.1",
   "description": "A Durable Component Compiler - compile once, run anywhere",
   "main": "dist/index.js",
