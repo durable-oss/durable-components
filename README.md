@@ -100,8 +100,10 @@ Built on **[Durable Programming Principles](https://durableprogramming.com)** fo
 - **Scoped CSS** - Svelte/Vue-style scoped styles with attribute selectors
 - **Explicit Reactivity** - Svelte 5 Runes ($state, $props, $derived, $effect)
 - **Template Directives** - {#if}, {#each}, on:event, bind:value
+- **Component Flattening** - Automatic recursive compilation of DCE component dependencies
 - **CLI Tool** - Simple `dcc` command for compilation
 - **Programmatic API** - `compile()` function for build tools
+- **Vite Plugin** - Seamless integration with Vite build tool
 - **TypeScript Support** - Full type definitions included
 - **53/53 Tests Passing** - Comprehensive test coverage
 
@@ -110,13 +112,15 @@ Built on **[Durable Programming Principles](https://durableprogramming.com)** fo
 - Vue 3 Composition API compilation
 - Web Components (standards-based)
 - UnoCSS integration
-- Vite/Webpack plugins
+- Webpack plugin
 - VS Code extension
 
 ## 📚 Documentation
 
 - **[Quick Start Guide](QUICKSTART.md)** - Get up and running in 5 minutes
 - **[Architecture Documentation](ARCHITECTURE.md)** - Deep dive into compiler internals
+- **[Component Flattening Guide](COMPONENT_FLATTENING.md)** - Automatic dependency resolution
+- **[Vite Plugin Guide](VITE_PLUGIN.md)** - Vite integration setup
 - **[Examples](examples/)** - Real-world component examples
 
 ## 🏗️ Architecture
@@ -165,6 +169,50 @@ npm install @durable/compiler
 ```
 
 ## 🔨 Usage
+
+### Vite Plugin (Recommended)
+
+The easiest way to use Durable Components in your project is with the Vite plugin:
+
+```bash
+npm install @durable/compiler
+```
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { durableComponents } from '@durable/compiler/vite-plugin';
+
+export default defineConfig({
+  plugins: [
+    react(), // or solid(), svelte(), etc.
+    durableComponents({
+      target: 'react', // 'react' | 'solid' | 'svelte' | 'vue'
+      style: 'scoped'  // 'scoped' | 'inline' | 'unocss'
+    })
+  ]
+});
+```
+
+Then just import `.dce` files directly in your code:
+
+```tsx
+// App.tsx
+import Counter from './Counter.dce';
+
+function App() {
+  return <Counter initialCount={5} />;
+}
+```
+
+**Features:**
+- ✅ Hot Module Replacement (HMR)
+- ✅ Automatic CSS extraction and injection
+- ✅ TypeScript support
+- ✅ Dev mode with better error messages
+
+See [examples/vite-demo](examples/vite-demo) for complete examples with React, SolidJS, and Svelte.
 
 ### CLI
 

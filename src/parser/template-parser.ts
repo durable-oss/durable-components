@@ -274,16 +274,37 @@ function readUntilClosingBrace(state: ParserState): string {
   let inString = false;
   let inTemplateLiteral = false;
   let stringChar = '';
+  let prevChar = '';
 
   while (state.index < state.input.length) {
     const ch = peek(state);
     const next = peek(state, 1);
+
+    // Handle escape sequences
+    if (prevChar === '\\') {
+      result += ch;
+      state.index++;
+      prevChar = '';
+      continue;
+    }
+
+    // Handle template literal expressions ${...}
+    if (inTemplateLiteral && ch === '$' && next === '{') {
+      result += ch;
+      state.index++;
+      result += peek(state);
+      state.index++;
+      depth++;
+      prevChar = '{';
+      continue;
+    }
 
     // Handle template literals
     if (ch === '`' && !inString) {
       inTemplateLiteral = !inTemplateLiteral;
       result += ch;
       state.index++;
+      prevChar = ch;
       continue;
     }
 
@@ -297,15 +318,20 @@ function readUntilClosingBrace(state: ParserState): string {
       }
       result += ch;
       state.index++;
+      prevChar = ch;
       continue;
     }
 
     // Handle braces
-    if (!inString && !inTemplateLiteral) {
+    if (!inString) {
       if (ch === '{') {
-        depth++;
+        // Only increment depth if not inside a template literal (unless it's a ${} expression)
+        if (!inTemplateLiteral) {
+          depth++;
+        }
         result += ch;
         state.index++;
+        prevChar = ch;
         continue;
       }
       if (ch === '}') {
@@ -316,22 +342,14 @@ function readUntilClosingBrace(state: ParserState): string {
         depth--;
         result += ch;
         state.index++;
+        prevChar = ch;
         continue;
       }
     }
 
-    // Handle template literal expressions
-    if (inTemplateLiteral && ch === '$' && next === '{') {
-      result += ch;
-      state.index++;
-      result += peek(state);
-      state.index++;
-      depth++;
-      continue;
-    }
-
     result += ch;
     state.index++;
+    prevChar = ch;
   }
 
   throw new CompilerError(
@@ -841,15 +859,25 @@ function parseEachBlock(state: ParserState, start: number): EachBlockASTNode {
   skipWhitespace(state);
 
   // Parse iterator variable
-  const context = readUntil(state, /[},\s]/);
+  const context = readUntil(state, /[},\s(]/);
   let index: string | undefined;
+  let key: any | undefined;
 
   // Check for index (", index")
   skipWhitespace(state);
   if (peek(state) === ',') {
     consume(state, ',');
     skipWhitespace(state);
-    index = readUntil(state, /[}\s]/);
+    index = readUntil(state, /[}\s(]/);
+  }
+
+  // Check for key expression "(keyExpression)"
+  skipWhitespace(state);
+  if (peek(state) === '(') {
+    consume(state, '(');
+    const keyExpr = readUntil(state, ')');
+    consume(state, ')');
+    key = parseExpression(keyExpr.trim());
   }
 
   skipWhitespace(state);
@@ -875,6 +903,7 @@ function parseEachBlock(state: ParserState, start: number): EachBlockASTNode {
     expression,
     context,
     index,
+    key,
     children,
     start,
     end: state.index
@@ -888,7 +917,7 @@ function parseMustacheTag(state: ParserState): MustacheTagASTNode {
   const start = state.index;
   consume(state, '{');
 
-  const expr = readUntil(state, '}');
+  const expr = readUntilClosingBrace(state);
   consume(state, '}');
 
   return {
@@ -973,7 +1002,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
   // Check for shorthand prop syntax: {propName}
   if (peek(state) === '{') {
     consume(state, '{');
-    const propName = readUntil(state, '}');
+    const propName = readUntilClosingBrace(state);
     consume(state, '}');
 
     if (propName && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName)) {
@@ -999,7 +1028,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
     consume(state, '=');
     skipWhitespace(state);
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {
@@ -1018,7 +1047,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
     consume(state, '=');
     skipWhitespace(state);
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {
@@ -1037,7 +1066,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
     consume(state, '=');
     skipWhitespace(state);
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {
@@ -1068,7 +1097,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
   // Dynamic value {expr}
   if (peek(state) === '{') {
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {
