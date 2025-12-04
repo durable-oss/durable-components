@@ -24,9 +24,13 @@ const transformer_1 = require("../transformer");
  * ```
  */
 const durableParser = function (options = {}) {
-    const parser = (doc) => {
+    const parser = (doc, file) => {
         const source = String(doc);
         const filename = options.filename || 'Component.dce';
+        // Set the file path so other plugins can access it
+        if (filename && file) {
+            file.path = filename;
+        }
         // Phase 1: Parse source into D-AST
         const ast = (0, index_1.parse)(source, { filename });
         // Phase 2: Transform D-AST into component tree (IR)

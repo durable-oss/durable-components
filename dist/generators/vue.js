@@ -281,7 +281,19 @@ function generateElement(node, ctx, depth) {
             // Event handler: on:click -> @click
             const eventName = attr.name.slice(3);
             const handler = transformTemplateExpression(attr.value, ctx);
-            attrs.push(`@${eventName}="${handler}"`);
+            // Vue has native modifier support: @click.prevent.stop
+            // Map canonical modifier names to Vue's syntax
+            const vueModifiers = attr.modifiers && attr.modifiers.length > 0
+                ? '.' + attr.modifiers.map((mod) => {
+                    switch (mod) {
+                        case 'preventDefault': return 'prevent';
+                        case 'stopPropagation': return 'stop';
+                        case 'stopImmediatePropagation': return 'stop'; // Vue doesn't have stopImmediate, use stop
+                        default: return mod; // Pass through self, once, capture, passive, trusted
+                    }
+                }).join('.')
+                : '';
+            attrs.push(`@${eventName}${vueModifiers}="${handler}"`);
         }
         else if (attr.name.startsWith('bind:')) {
             // Two-way binding: bind:value -> v-model
@@ -343,13 +355,12 @@ function generateIf(node, ctx, depth) {
     if (!node.alternate) {
         // Find the first element to attach v-if to
         const lines = consequent.split('\n');
-        // Find the first line that starts with a tag
-        const firstTagLineIdx = lines.findIndex((line) => line.trim().startsWith('<'));
-        if (firstTagLineIdx >= 0) {
-            // Insert v-if into the first tag
-            const firstLine = lines[firstTagLineIdx].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-            const result = [...lines.slice(0, firstTagLineIdx), firstLine, ...lines.slice(firstTagLineIdx + 1)];
-            return result.join('\n');
+        const firstNonEmptyLine = lines.findIndex((line) => line.trim().length > 0);
+        if (firstNonEmptyLine >= 0 && lines[firstNonEmptyLine].trim().startsWith('<')) {
+            // Insert v-if into the first tag (after opening <tag)
+            const firstLine = lines[firstNonEmptyLine].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 v-if="${condition}"$2`);
+            const result = [...lines.slice(0, firstNonEmptyLine), firstLine, ...lines.slice(firstNonEmptyLine + 1)].join('\n');
+            return result;
         }
         return consequent;
     }
@@ -360,15 +371,13 @@ function generateIf(node, ctx, depth) {
     // Add v-if to consequent and v-else to alternate
     const consequentLines = consequent.split('\n');
     const alternateLines = alternate.split('\n');
-    const firstConsequentLineIdx = consequentLines.findIndex((line) => line.trim().startsWith('<'));
-    const firstAlternateLineIdx = alternateLines.findIndex((line) => line.trim().startsWith('<'));
-    if (firstConsequentLineIdx >= 0) {
-        const firstLine = consequentLines[firstConsequentLineIdx].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-        consequentLines[firstConsequentLineIdx] = firstLine;
+    const firstConsequentIdx = consequentLines.findIndex((line) => line.trim().startsWith('<'));
+    const firstAlternateIdx = alternateLines.findIndex((line) => line.trim().startsWith('<'));
+    if (firstConsequentIdx >= 0) {
+        consequentLines[firstConsequentIdx] = consequentLines[firstConsequentIdx].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 v-if="${condition}"$2`);
     }
-    if (firstAlternateLineIdx >= 0) {
-        const firstLine = alternateLines[firstAlternateLineIdx].replace(/^(\s*<\w+)/, `$1 v-else`);
-        alternateLines[firstAlternateLineIdx] = firstLine;
+    if (firstAlternateIdx >= 0) {
+        alternateLines[firstAlternateIdx] = alternateLines[firstAlternateIdx].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 v-else$2`);
     }
     return `${consequentLines.join('\n')}\n${alternateLines.join('\n')}`;
 }
@@ -397,11 +406,10 @@ function generateEach(node, ctx, depth) {
     const keyAttr = key ? ` :key="${key}"` : '';
     // Insert v-for into the first child element
     const childLines = children.split('\n');
-    const firstTagLineIdx = childLines.findIndex((line) => line.trim().startsWith('<'));
-    if (firstTagLineIdx >= 0) {
-        const firstLine = childLines[firstTagLineIdx].replace(/^(\s*<\w+)/, `$1 ${vFor}${keyAttr}`);
-        const result = [...childLines.slice(0, firstTagLineIdx), firstLine, ...childLines.slice(firstTagLineIdx + 1)];
-        return result.join('\n');
+    const firstNonEmptyLine = childLines.findIndex((line) => line.trim().length > 0);
+    if (firstNonEmptyLine >= 0 && childLines[firstNonEmptyLine].trim().startsWith('<')) {
+        const firstLine = childLines[firstNonEmptyLine].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 ${vFor}${keyAttr}$2`);
+        return [...childLines.slice(0, firstNonEmptyLine), firstLine, ...childLines.slice(firstNonEmptyLine + 1)].join('\n');
     }
     return children;
 }

@@ -142,11 +142,15 @@ function transformElement(node) {
     const bindings = {};
     for (const attr of node.attributes) {
         if (attr.type === 'EventHandler') {
-            // Event handler: on:click={handler}
+            // Event handler: on:click={handler} or on:click|preventDefault={handler}
+            // Modifiers are now parsed by the parser
+            const eventName = attr.name;
+            const modifiers = attr.modifiers;
             const expr = extractExpression(attr.expression);
             attributes.push({
-                name: `on:${attr.name}`,
-                value: `functions.${expr}`
+                name: `on:${eventName}`,
+                value: `functions.${expr}`,
+                modifiers: modifiers && modifiers.length > 0 ? modifiers : undefined
             });
         }
         else if (attr.type === 'Binding') {
@@ -264,6 +268,7 @@ function transformEachBlock(node) {
         expression: prefixExpression(expr),
         itemName: node.context,
         indexName: node.index,
+        key: node.key ? extractExpression(node.key) : undefined,
         children: node.children.map(transformNode)
     };
 }
@@ -329,12 +334,17 @@ function extractExpression(node) {
         if (n.type === 'Identifier') {
             return typeof n.name === 'string' ? n.name : '';
         }
+        // Handle chain expression (optional chaining)
+        if (n.type === 'ChainExpression') {
+            return extract(n.expression, depth + 1);
+        }
         // Handle member expression
         if (n.type === 'MemberExpression') {
             const object = extract(n.object, depth + 1);
+            const optional = n.optional ? '?.' : '.';
             const property = n.computed
                 ? `[${extract(n.property, depth + 1)}]`
-                : `.${extract(n.property, depth + 1)}`;
+                : `${optional}${extract(n.property, depth + 1)}`;
             return object + property;
         }
         // Handle binary expression
@@ -364,10 +374,11 @@ function extractExpression(node) {
         // Handle call expression
         if (n.type === 'CallExpression') {
             const callee = extract(n.callee, depth + 1);
+            const optional = n.optional ? '?.' : '';
             const args = Array.isArray(n.arguments)
                 ? n.arguments.map((arg) => extract(arg, depth + 1)).join(', ')
                 : '';
-            return `${callee}(${args})`;
+            return `${callee}${optional}(${args})`;
         }
         // Handle arrow function
         if (n.type === 'ArrowFunctionExpression') {

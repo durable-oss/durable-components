@@ -8,6 +8,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateReact = generateReact;
 const code_gen_1 = require("../utils/code-gen");
+const event_modifiers_1 = require("../utils/event-modifiers");
 /**
  * Generate React component from IR
  */
@@ -292,7 +293,11 @@ function generateElementJSX(node, ctx, depth) {
             // Event handler: on:click -> onClick
             const eventName = 'on' + capitalize(attr.name.slice(3));
             const handler = attr.value.replace('functions.', '');
-            props.push(`${eventName}={${handler}}`);
+            // Handle event modifiers (React doesn't have native modifier support)
+            const finalHandler = attr.modifiers && attr.modifiers.length > 0
+                ? (0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)
+                : handler;
+            props.push(`${eventName}={${finalHandler}}`);
         }
         else if (attr.name === 'bind:this') {
             // Element reference: bind:this={inputElement} -> ref={inputElement}
@@ -369,11 +374,16 @@ function generateEachJSX(node, ctx, depth) {
     const array = transformExpression(node.expression, {});
     const item = node.itemName;
     const index = node.indexName || 'index';
+    const key = node.key ? transformExpression(node.key, {}) : index;
     const children = node.children
         .map((child) => {
         // Replace item references in children
         let jsx = generateJSX(child, ctx, depth + 1);
-        // This is simplified - would need proper scoping
+        // Add key prop to first child element if key is specified
+        if (node.key && child.type === 'element') {
+            // Insert key prop into the first element
+            jsx = jsx.replace(/^(\s*<\w+)/, `$1 key={${key}}`);
+        }
         return jsx;
     })
         .filter(Boolean)

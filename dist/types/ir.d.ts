@@ -101,6 +101,7 @@ export interface ElementNode extends BaseTemplateNode, Parent {
 export interface AttributeBinding {
     name: string;
     value: string;
+    modifiers?: string[];
 }
 /**
  * Text Node (static text)

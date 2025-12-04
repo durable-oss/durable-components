@@ -8,6 +8,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateSvelte = generateSvelte;
 const code_gen_1 = require("../utils/code-gen");
+const event_modifiers_1 = require("../utils/event-modifiers");
 /**
  * Generate Svelte 5 component from IR
  */
@@ -116,10 +117,12 @@ function generateScriptContent(ir) {
  */
 function generatePropsDeclaration(ir) {
     const propsList = ir.props.map((prop) => {
+        // Rename reserved keywords to avoid parse errors
+        const propName = prop.name === 'class' ? 'class: className' : prop.name;
         if (prop.defaultValue) {
-            return `${prop.name} = ${prop.defaultValue}`;
+            return `${propName} = ${prop.defaultValue}`;
         }
-        return prop.name;
+        return propName;
     });
     return `let { ${propsList.join(', ')} } = $props();`;
 }
@@ -212,15 +215,22 @@ function generateElement(node, depth) {
     const attrs = [];
     // Handle bindings (e.g., class bindings)
     for (const [key, value] of Object.entries(bindings)) {
-        const valueStr = transformExpression(String(value));
+        let valueStr = transformExpression(String(value));
+        // Replace class prop reference with className
+        valueStr = valueStr.replace(/\bclass\b/g, 'className');
         attrs.push(`${key}=${valueStr}`);
     }
     // Handle attributes (events, bindings, etc.)
     for (const attr of attributes) {
         if (attr.name.startsWith('on:')) {
-            // Event handler: on:click={handler}
+            // Event handler: Transform on:click to onclick for Svelte 5
+            const eventName = attr.name.slice(3); // Remove 'on:' prefix
             const handler = transformExpression(attr.value);
-            attrs.push(`${attr.name}={${handler}}`);
+            // Handle event modifiers (Svelte 5 doesn't have native modifier support)
+            const finalHandler = attr.modifiers && attr.modifiers.length > 0
+                ? (0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)
+                : handler;
+            attrs.push(`on${eventName}={${finalHandler}}`);
         }
         else if (attr.name.startsWith('bind:')) {
             // Two-way binding: bind:value={var}
@@ -321,6 +331,8 @@ function generateSlot(node) {
  */
 function transformExpression(expr) {
     let transformed = expr;
+    // Replace props.class with className before removing props prefix
+    transformed = transformed.replace(/\bprops\.class\b/g, 'className');
     transformed = transformed.replace(/\bstate\./g, '');
     transformed = transformed.replace(/\bprops\./g, '');
     transformed = transformed.replace(/\bderived\./g, '');
