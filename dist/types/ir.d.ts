@@ -77,7 +77,7 @@ export interface RefDefinition {
 /**
  * Template Node Types
  */
-export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug';
+export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug' | 'comment';
 /**
  * Base Template Node (unist-compatible)
  */
@@ -185,9 +185,16 @@ export interface KeyNode extends BaseTemplateNode, Parent {
     children: TemplateNode[];
 }
 /**
+ * Comment Node (HTML comment like <!-- comment -->)
+ */
+export interface CommentNode extends BaseTemplateNode {
+    type: 'comment';
+    content: string;
+}
+/**
  * Union type for all template nodes
  */
-export type TemplateNode = ElementNode | TextNode | ExpressionNode | IfNode | EachNode | KeyNode | SlotNode | RenderNode | ConstNode | HtmlNode | DebugNode;
+export type TemplateNode = ElementNode | TextNode | ExpressionNode | IfNode | EachNode | KeyNode | SlotNode | RenderNode | ConstNode | HtmlNode | DebugNode | CommentNode;
 /**
  * Complete Durable Component IR
  *

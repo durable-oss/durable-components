@@ -18,6 +18,7 @@ import type {
   ConstTagASTNode,
   HtmlTagASTNode,
   DebugTagASTNode,
+  CommentASTNode,
   TemplateAttribute
 } from '../types/ast';
 import { CompilerError } from '../types/compiler';
@@ -114,9 +115,13 @@ function parseNode(state: ParserState): TemplateASTNode | null {
     return parseMustacheTag(state);
   }
 
-  // Check for HTML element
+  // Check for HTML element or comment
   if (peek(state) === '<') {
     const next = peek(state, 1);
+    // Check for HTML comment
+    if (next === '!' && peek(state, 2) === '-' && peek(state, 3) === '-') {
+      return parseComment(state);
+    }
     // Not a closing tag
     if (next !== '/') {
       return parseElement(state);
@@ -1153,6 +1158,47 @@ function parseText(state: ParserState): TextASTNode {
   return {
     type: 'Text',
     data: text,
+    start,
+    end: state.index
+  };
+}
+
+/**
+ * Parse HTML comment (<!-- ... -->)
+ */
+function parseComment(state: ParserState): CommentASTNode {
+  const start = state.index;
+
+  // Consume <!--
+  consume(state, '<');
+  consume(state, '!');
+  consume(state, '-');
+  consume(state, '-');
+
+  let comment = '';
+
+  // Read until we find -->
+  while (state.index < state.input.length) {
+    const char = peek(state);
+    const next1 = peek(state, 1);
+    const next2 = peek(state, 2);
+
+    // Check for -->
+    if (char === '-' && next1 === '-' && next2 === '>') {
+      // Consume -->
+      consume(state, '-');
+      consume(state, '-');
+      consume(state, '>');
+      break;
+    }
+
+    comment += char;
+    state.index++;
+  }
+
+  return {
+    type: 'Comment',
+    data: comment,
     start,
     end: state.index
   };

@@ -322,6 +322,9 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
     case 'slot':
       return '{props.children}';
 
+    case 'comment':
+      return `{/* ${node.content} */}`;
+
     default:
       return '';
   }

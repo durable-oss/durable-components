@@ -111,6 +111,8 @@ function transformNode(node) {
                 return transformHtmlTag(node);
             case 'DebugTag':
                 return transformDebugTag(node);
+            case 'Comment':
+                return transformComment(node);
             default:
                 // Defensive: warn about unknown node type
                 const unknownType = node.type;
@@ -203,6 +205,25 @@ function transformText(node) {
     }
     return {
         type: 'text',
+        content: node.data
+    };
+}
+/**
+ * Transform comment node
+ */
+function transformComment(node) {
+    // Defensive: validate input
+    if (!node || typeof node !== 'object') {
+        throw new TypeError('transformComment: node must be an object');
+    }
+    if (node.type !== 'Comment') {
+        throw new Error(`transformComment: expected Comment node, got "${node.type}"`);
+    }
+    if (typeof node.data !== 'string') {
+        throw new TypeError('transformComment: node.data must be a string');
+    }
+    return {
+        type: 'comment',
         content: node.data
     };
 }

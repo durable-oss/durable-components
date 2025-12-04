@@ -197,6 +197,8 @@ function generateTemplate(node, depth = 0) {
             return generateEach(node, depth);
         case 'slot':
             return generateSlot(node);
+        case 'comment':
+            return `<!-- ${node.content} -->`;
         default:
             return '';
     }

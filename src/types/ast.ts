@@ -96,7 +96,8 @@ export type TemplateASTNodeType =
   | 'RenderBlock'
   | 'ConstTag'
   | 'HtmlTag'
-  | 'DebugTag';
+  | 'DebugTag'
+  | 'Comment';
 
 /**
  * Base Template AST Node
@@ -280,6 +281,14 @@ export interface KeyBlockASTNode extends BaseTemplateNode {
 }
 
 /**
+ * Comment node (e.g., <!-- comment -->)
+ */
+export interface CommentASTNode extends BaseTemplateNode {
+  type: 'Comment';
+  data: string; // Comment content
+}
+
+/**
  * Union type for all template AST nodes
  */
 export type TemplateASTNode =
@@ -293,7 +302,8 @@ export type TemplateASTNode =
   | RenderBlockASTNode
   | ConstTagASTNode
   | HtmlTagASTNode
-  | DebugTagASTNode;
+  | DebugTagASTNode
+  | CommentASTNode;
 
 /**
  * Complete Durable Component AST (D-AST)

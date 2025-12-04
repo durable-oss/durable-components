@@ -71,6 +71,13 @@ export interface CompileOptions {
    * @default false
    */
   flatten?: boolean;
+
+  /**
+   * Preserve HTML comments in compiled output
+   * When false (default), HTML comments are stripped during compilation.
+   * @default false
+   */
+  preserveComments?: boolean;
 }
 
 /**

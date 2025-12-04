@@ -269,6 +269,8 @@ function generateJSX(node, ctx, depth = 0) {
             return generateEachJSX(node, ctx, depth);
         case 'slot':
             return '{props.children}';
+        case 'comment':
+            return `{/* ${node.content} */}`;
         default:
             return '';
     }

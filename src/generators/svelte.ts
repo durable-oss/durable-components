@@ -241,6 +241,9 @@ function generateTemplate(node: TemplateNode, depth: number = 0): string {
     case 'slot':
       return generateSlot(node);
 
+    case 'comment':
+      return `<!-- ${node.content} -->`;
+
     default:
       return '';
   }

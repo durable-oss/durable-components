@@ -75,7 +75,7 @@ export interface StyleBlock extends BaseNode {
 /**
  * Template AST Node Types
  */
-export type TemplateASTNodeType = 'Element' | 'Text' | 'MustacheTag' | 'IfBlock' | 'EachBlock' | 'KeyBlock' | 'Slot' | 'RenderBlock' | 'ConstTag' | 'HtmlTag' | 'DebugTag';
+export type TemplateASTNodeType = 'Element' | 'Text' | 'MustacheTag' | 'IfBlock' | 'EachBlock' | 'KeyBlock' | 'Slot' | 'RenderBlock' | 'ConstTag' | 'HtmlTag' | 'DebugTag' | 'Comment';
 /**
  * Base Template AST Node
  */
@@ -238,9 +238,16 @@ export interface KeyBlockASTNode extends BaseTemplateNode {
     children: TemplateASTNode[];
 }
 /**
+ * Comment node (e.g., <!-- comment -->)
+ */
+export interface CommentASTNode extends BaseTemplateNode {
+    type: 'Comment';
+    data: string;
+}
+/**
  * Union type for all template AST nodes
  */
-export type TemplateASTNode = ElementASTNode | TextASTNode | MustacheTagASTNode | IfBlockASTNode | EachBlockASTNode | KeyBlockASTNode | SlotASTNode | RenderBlockASTNode | ConstTagASTNode | HtmlTagASTNode | DebugTagASTNode;
+export type TemplateASTNode = ElementASTNode | TextASTNode | MustacheTagASTNode | IfBlockASTNode | EachBlockASTNode | KeyBlockASTNode | SlotASTNode | RenderBlockASTNode | ConstTagASTNode | HtmlTagASTNode | DebugTagASTNode | CommentASTNode;
 /**
  * Complete Durable Component AST (D-AST)
  *

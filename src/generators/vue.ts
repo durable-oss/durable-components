@@ -310,6 +310,9 @@ function generateTemplate(node: TemplateNode, ctx: GeneratorContext, depth: numb
     case 'slot':
       return generateSlot(node);
 
+    case 'comment':
+      return `<!-- ${node.content} -->`;
+
     default:
       return '';
   }
