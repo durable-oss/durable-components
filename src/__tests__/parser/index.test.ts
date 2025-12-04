@@ -298,6 +298,65 @@ describe('Parser', () => {
       expect(ast.template).toBeDefined();
     });
 
+    it('should parse component with $state rune', () => {
+      const source = `
+<script>
+  let count = $state(0);
+  let isOpen = $state(false);
+</script>
+
+<template>
+  <div>{count}</div>
+</template>
+      `;
+
+      const ast = parse(source);
+
+      expect(ast.script).toBeDefined();
+      expect(ast.script!.content).toContain('$state(0)');
+      expect(ast.script!.content).toContain('$state(false)');
+      expect(ast.template).toBeDefined();
+    });
+
+    it('should parse component with $derived rune', () => {
+      const source = `
+<script>
+  let count = $state(0);
+  let doubled = $derived(count * 2);
+  let result = $derived.by(() => count * 3);
+</script>
+
+<template>
+  <div>{doubled}</div>
+</template>
+      `;
+
+      const ast = parse(source);
+
+      expect(ast.script).toBeDefined();
+      expect(ast.script!.content).toContain('$derived(count * 2)');
+      expect(ast.script!.content).toContain('$derived.by');
+      expect(ast.template).toBeDefined();
+    });
+
+    it('should parse component with $bindable rune', () => {
+      const source = `
+<script>
+  let { value = $bindable('') } = $props();
+</script>
+
+<template>
+  <input bind:value />
+</template>
+      `;
+
+      const ast = parse(source);
+
+      expect(ast.script).toBeDefined();
+      expect(ast.script!.content).toContain('$bindable');
+      expect(ast.template).toBeDefined();
+    });
+
     it('should parse component with derived state', () => {
       const source = `
 <script>

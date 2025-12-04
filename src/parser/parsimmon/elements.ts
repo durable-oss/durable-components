@@ -5,7 +5,7 @@
 import * as P from 'parsimmon';
 import type { ElementASTNode, TemplateASTNode } from '../../types/ast';
 import { indexed, type IndexedParser } from './utils';
-import { attribute, shorthandAttribute } from './attributes';
+import { attribute, shorthandAttribute, spreadAttribute } from './attributes';
 
 const optWhitespace = P.optWhitespace;
 
@@ -25,7 +25,7 @@ export const element: IndexedParser<ElementASTNode> = indexed(
     return P.seqObj<any>(
       P.string('<'),
       ['name', P.regexp(/[a-zA-Z][a-zA-Z0-9]*/)],
-      ['attributes', optWhitespace.then(P.alt(shorthandAttribute, attribute).sepBy(optWhitespace))],
+      ['attributes', optWhitespace.then(P.alt(spreadAttribute, shorthandAttribute, attribute).sepBy(optWhitespace))],
       optWhitespace,
       ['selfClosing', P.string('/').result(true).fallback(false)],
       P.string('>')

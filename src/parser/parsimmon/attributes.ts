@@ -179,3 +179,17 @@ export const shorthandAttribute: IndexedParser<TemplateAttribute> = indexed(
       value: [{ type: 'MustacheTag' as const, expression: parseExpression(propName) }]
     }))
 );
+
+/**
+ * Spread attribute syntax: {...props}
+ */
+export const spreadAttribute: IndexedParser<TemplateAttribute> = indexed(
+  P.string('{')
+    .then(P.string('...'))
+    .then(expression)
+    .skip(P.string('}'))
+    .map(expr => ({
+      type: 'Spread' as const,
+      expression: parseExpression(expr)
+    }))
+);

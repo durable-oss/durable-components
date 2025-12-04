@@ -125,7 +125,8 @@ export type TemplateAttribute =
   | EventAttribute
   | BindingAttribute
   | ClassDirective
-  | StyleDirective;
+  | StyleDirective
+  | SpreadAttribute;
 
 /**
  * Static attribute (e.g., class="foo")
@@ -180,6 +181,14 @@ export interface StyleDirective extends BaseNode {
   type: 'StyleDirective';
   name: string;
   value: string | AcornNode;
+}
+
+/**
+ * Spread attribute (e.g., {...props})
+ */
+export interface SpreadAttribute extends BaseNode {
+  type: 'Spread';
+  expression: AcornNode;
 }
 
 /**

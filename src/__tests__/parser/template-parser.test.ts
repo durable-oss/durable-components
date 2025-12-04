@@ -159,6 +159,41 @@ describe('Template Parser', () => {
       expect(element.attributes).toHaveLength(1);
       expect(element.attributes[0].name).toBe('class');
     });
+
+    it('should parse spread attributes {...props}', () => {
+      const nodes = parseTemplate('<div {...props}></div>');
+      const element = nodes[0] as ElementASTNode;
+
+      expect(element.attributes).toHaveLength(1);
+      expect(element.attributes[0].type).toBe('Spread');
+    });
+
+    it('should parse spread attributes with other attributes', () => {
+      const nodes = parseTemplate('<input class="test" {...props} disabled />');
+      const element = nodes[0] as ElementASTNode;
+
+      expect(element.attributes).toHaveLength(3);
+      expect(element.attributes[0].name).toBe('class');
+      expect(element.attributes[1].type).toBe('Spread');
+      expect(element.attributes[2].name).toBe('disabled');
+    });
+
+    it('should parse multiple spread attributes', () => {
+      const nodes = parseTemplate('<div {...props1} {...props2}></div>');
+      const element = nodes[0] as ElementASTNode;
+
+      expect(element.attributes).toHaveLength(2);
+      expect(element.attributes[0].type).toBe('Spread');
+      expect(element.attributes[1].type).toBe('Spread');
+    });
+
+    it('should parse spread with complex expression', () => {
+      const nodes = parseTemplate('<div {...$$restProps}></div>');
+      const element = nodes[0] as ElementASTNode;
+
+      expect(element.attributes).toHaveLength(1);
+      expect(element.attributes[0].type).toBe('Spread');
+    });
   });
 
   describe('Mustache tag parsing', () => {

@@ -137,10 +137,13 @@ function generateScriptContent(ir: DurableComponentIR): string {
  */
 function generatePropsDeclaration(ir: DurableComponentIR): string {
   const propsList = ir.props.map((prop) => {
+    // Rename reserved keywords to avoid parse errors
+    const propName = prop.name === 'class' ? 'class: className' : prop.name;
+
     if (prop.defaultValue) {
-      return `${prop.name} = ${prop.defaultValue}`;
+      return `${propName} = ${prop.defaultValue}`;
     }
-    return prop.name;
+    return propName;
   });
 
   return `let { ${propsList.join(', ')} } = $props();`;
@@ -258,7 +261,9 @@ function generateElement(node: any, depth: number): string {
 
   // Handle bindings (e.g., class bindings)
   for (const [key, value] of Object.entries(bindings)) {
-    const valueStr = transformExpression(String(value));
+    let valueStr = transformExpression(String(value));
+    // Replace class prop reference with className
+    valueStr = valueStr.replace(/\bclass\b/g, 'className');
     attrs.push(`${key}=${valueStr}`);
   }
 
@@ -389,6 +394,9 @@ function generateSlot(node: any): string {
  */
 function transformExpression(expr: string): string {
   let transformed = expr;
+
+  // Replace props.class with className before removing props prefix
+  transformed = transformed.replace(/\bprops\.class\b/g, 'className');
 
   transformed = transformed.replace(/\bstate\./g, '');
   transformed = transformed.replace(/\bprops\./g, '');
