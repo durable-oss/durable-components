@@ -17,8 +17,18 @@ export function setTemplateNodeParser(parser: P.Parser<TemplateASTNode>) {
 }
 
 /**
+ * HTML5 void elements that don't require closing tags
+ */
+const VOID_ELEMENTS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr'
+]);
+
+/**
  * HTML element parser
  * Handles both self-closing and regular elements with children
+ * Special handling for <script> and <style> elements to treat their content as raw text
+ * Special handling for HTML5 void elements that don't require closing tags
  */
 export const element: IndexedParser<ElementASTNode> = indexed(
   P.lazy(() => {
@@ -30,13 +40,32 @@ export const element: IndexedParser<ElementASTNode> = indexed(
       ['selfClosing', P.string('/').result(true).fallback(false)],
       P.string('>')
     ).chain(({ name, attributes, selfClosing }) => {
-      if (selfClosing) {
+      // Self-closing syntax or void element - no children
+      if (selfClosing || VOID_ELEMENTS.has(name.toLowerCase())) {
         return P.succeed({
           type: 'Element' as const,
           name,
           attributes: attributes || [],
           children: []
         });
+      }
+
+      // Special handling for <script> and <style> elements:
+      // Their content should be treated as raw text, not parsed as template nodes
+      if (name.toLowerCase() === 'script' || name.toLowerCase() === 'style') {
+        // Match everything until the closing tag as raw text
+        return P.regexp(new RegExp(`[\\s\\S]*?(?=</${name})`, 'i'))
+          .skip(P.string('</'))
+          .skip(P.string(name))
+          .skip(P.string('>'))
+          .map(rawContent => ({
+            type: 'Element' as const,
+            name,
+            attributes: attributes || [],
+            children: rawContent.trim()
+              ? [{ type: 'Text' as const, data: rawContent, start: 0, end: rawContent.length }]
+              : []
+          }));
       }
 
       return templateNodeParser.many()

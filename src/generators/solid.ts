@@ -357,6 +357,18 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
     case 'comment':
       return `{/* ${node.content} */}`;
 
+    case 'dce-element':
+      return generateDceElementJSX(node, ctx, depth);
+
+    case 'dce-window':
+      return generateDceWindowJSX(node, ctx);
+
+    case 'dce-boundary':
+      return generateDceBoundaryJSX(node, ctx, depth);
+
+    case 'dce-head':
+      return generateDceHeadJSX(node, ctx, depth);
+
     default:
       return '';
   }
@@ -568,6 +580,138 @@ function transformExpression(expr: string, ir: DurableComponentIR, ctx: Generato
   }
 
   return transformed;
+}
+
+/**
+ * Generate dce:element JSX (dynamic component)
+ */
+function generateDceElementJSX(
+  node: any,
+  ctx: GeneratorContext,
+  depth: number
+): string {
+  ctx.usedPrimitives.add('Dynamic');
+
+  const { tagExpression, attributes = [], bindings = {}, children = [] } = node;
+
+  // Transform the tag expression
+  const component = transformExpression(tagExpression, {} as any, ctx);
+
+  // Collect all props
+  const props: string[] = [];
+
+  // SolidJS uses Dynamic component for dynamic elements
+  props.push(`component={${component}}`);
+
+  // Handle bindings
+  for (const [key, value] of Object.entries(bindings)) {
+    const valueStr = String(value);
+    if (key === 'class') {
+      props.push(`className={${transformExpression(valueStr, {} as any, ctx)}}`);
+    } else {
+      props.push(`${key}={${transformExpression(valueStr, {} as any, ctx)}}`);
+    }
+  }
+
+  // Handle attributes
+  for (const attr of attributes) {
+    if (attr.name.startsWith('on:')) {
+      const eventName = 'on' + capitalize(attr.name.slice(3));
+      const handler = attr.value.replace('functions.', '');
+      const finalHandler = attr.modifiers && attr.modifiers.length > 0
+        ? generateModifierWrapper(attr.modifiers, handler)
+        : handler;
+      props.push(`${eventName}={${finalHandler}}`);
+    } else if (attr.name.startsWith('bind:')) {
+      const propName = attr.name.slice(5);
+      const varName = attr.value.replace('state.', '');
+      const setter = ctx.stateSetters.get(varName);
+      props.push(`${propName}={${varName}()}`);
+      if (setter && propName === 'value') {
+        props.push(`onInput={(e) => ${setter}(e.currentTarget.value)}`);
+      }
+    }
+  }
+
+  const propsStr = props.length > 0 ? ' ' + props.join(' ') : '';
+
+  // Handle children
+  if (children.length === 0) {
+    return `<Dynamic${propsStr} />`;
+  }
+
+  const childrenJSX = children
+    .map((child: any) => generateJSX(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  if (!childrenJSX.trim()) {
+    return `<Dynamic${propsStr} />`;
+  }
+
+  return `<Dynamic${propsStr}>\n${indent(childrenJSX)}\n</Dynamic>`;
+}
+
+/**
+ * Generate dce:window JSX (window event handlers)
+ */
+function generateDceWindowJSX(node: any, ctx: GeneratorContext): string {
+  // SolidJS doesn't have a built-in window directive
+  // We need to use onMount/onCleanup to set up window event listeners
+  // For now, return empty string as this needs script-level handling
+  // TODO: Refactor to properly inject window event handlers
+  return '';
+}
+
+/**
+ * Generate dce:boundary JSX (error boundary)
+ */
+function generateDceBoundaryJSX(
+  node: any,
+  ctx: GeneratorContext,
+  depth: number
+): string {
+  ctx.usedPrimitives.add('ErrorBoundary');
+
+  const { children = [], attributes = [] } = node;
+
+  const childrenJSX = children
+    .map((child: any) => generateJSX(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  // Find the onerror handler if specified
+  let fallback = 'err => <div>Error: {err.message}</div>';
+  for (const attr of attributes) {
+    if (attr.name === 'onerror') {
+      const handler = attr.value.replace('functions.', '');
+      fallback = `err => { ${handler}(err); return <div>Error occurred</div>; }`;
+    }
+  }
+
+  return `<ErrorBoundary fallback={${fallback}}>\n${indent(childrenJSX)}\n</ErrorBoundary>`;
+}
+
+/**
+ * Generate dce:head JSX (document head)
+ */
+function generateDceHeadJSX(
+  node: any,
+  ctx: GeneratorContext,
+  depth: number
+): string {
+  // SolidJS uses solid-meta or @solidjs/meta for head management
+  // Generate using Portal to head
+  ctx.usedPrimitives.add('Portal');
+
+  const { children = [] } = node;
+
+  const childrenJSX = children
+    .map((child: any) => generateJSX(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  return `<Portal mount={document.head}>\n${indent(childrenJSX)}\n</Portal>`;
 }
 
 /**

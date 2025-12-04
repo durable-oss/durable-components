@@ -69,6 +69,14 @@ export interface FunctionDefinition {
     body: string;
 }
 /**
+ * Snippet Definition (template snippets that can be passed as props)
+ */
+export interface SnippetDefinition {
+    name: string;
+    params?: string[];
+    template: TemplateNode[];
+}
+/**
  * Element Reference Definition (for bind:this)
  */
 export interface RefDefinition {
@@ -77,7 +85,7 @@ export interface RefDefinition {
 /**
  * Template Node Types
  */
-export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug' | 'comment';
+export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug' | 'comment' | 'dce-element' | 'dce-window' | 'dce-boundary' | 'dce-head';
 /**
  * Base Template Node (unist-compatible)
  */
@@ -193,9 +201,41 @@ export interface CommentNode extends BaseTemplateNode {
     content: string;
 }
 /**
+ * DCE Element Node (dynamic element tag like <dce:element>)
+ */
+export interface DceElementNode extends BaseTemplateNode, Parent {
+    type: 'dce-element';
+    tagExpression: string;
+    attributes?: AttributeBinding[];
+    bindings?: Record<string, string>;
+    children: TemplateNode[];
+}
+/**
+ * DCE Window Node (window event handlers like <dce:window>)
+ */
+export interface DceWindowNode extends BaseTemplateNode {
+    type: 'dce-window';
+    attributes?: AttributeBinding[];
+}
+/**
+ * DCE Boundary Node (error boundary like <dce:boundary>)
+ */
+export interface DceBoundaryNode extends BaseTemplateNode, Parent {
+    type: 'dce-boundary';
+    attributes?: AttributeBinding[];
+    children: TemplateNode[];
+}
+/**
+ * DCE Head Node (document head like <dce:head>)
+ */
+export interface DceHeadNode extends BaseTemplateNode, Parent {
+    type: 'dce-head';
+    children: TemplateNode[];
+}
+/**
  * Union type for all template nodes
  */
-export type TemplateNode = ElementNode | TextNode | ExpressionNode | IfNode | EachNode | KeyNode | SlotNode | RenderNode | ConstNode | HtmlNode | DebugNode | CommentNode;
+export type TemplateNode = ElementNode | TextNode | ExpressionNode | IfNode | EachNode | KeyNode | SlotNode | RenderNode | ConstNode | HtmlNode | DebugNode | CommentNode | DceElementNode | DceWindowNode | DceBoundaryNode | DceHeadNode;
 /**
  * Complete Durable Component IR
  *
@@ -229,6 +269,8 @@ export interface DurableComponentIR extends Node {
     refs: RefDefinition[];
     /** Event handlers and helper functions */
     functions: FunctionDefinition[];
+    /** Template snippets (reusable template fragments) */
+    snippets: SnippetDefinition[];
     /** Component template structure */
     template: TemplateNode;
     /** Component styles (CSS string) */

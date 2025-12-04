@@ -7,11 +7,12 @@ import type {
   IfBlockASTNode,
   EachBlockASTNode,
   KeyBlockASTNode,
+  SnippetBlockASTNode,
   TemplateASTNode,
   ElseBlock
 } from '../../types/ast';
 import { indexed, type IndexedParser, parseExpression } from './utils';
-import { expression, identifier } from './expressions';
+import { expression, identifier, destructuringPattern } from './expressions';
 
 const optWhitespace = P.optWhitespace;
 
@@ -94,7 +95,7 @@ export const eachBlock: IndexedParser<EachBlockASTNode> = indexed(
       optWhitespace,
       P.string('as'),
       optWhitespace,
-      ['context', identifier],
+      ['context', destructuringPattern],
       ['index', optWhitespace.then(P.string(',').then(optWhitespace).then(identifier)).fallback(undefined)],
       ['key', optWhitespace.then(
         P.string('(')
@@ -130,6 +131,34 @@ export const keyBlock: IndexedParser<KeyBlockASTNode> = indexed(
     ).map(({ expression: expr, children }) => ({
       type: 'KeyBlock' as const,
       expression: parseExpression(expr.trim()),
+      children
+    }));
+  })
+);
+
+/**
+ * {#snippet} block parser
+ * Parses {#snippet name(params)}...{/snippet}
+ */
+export const snippetBlock: IndexedParser<SnippetBlockASTNode> = indexed(
+  P.lazy(() => {
+    return P.seqObj<any>(
+      P.string('{#snippet'),
+      optWhitespace,
+      ['name', identifier],
+      ['params', P.string('(')
+        .then(P.regexp(/[^)]*/).map(p => p.split(',').map(x => x.trim()).filter(Boolean)))
+        .skip(P.string(')'))
+        .fallback([])
+      ],
+      optWhitespace,
+      P.string('}'),
+      ['children', P.lazy(() => templateNodeParser.many())],
+      P.string('{/snippet}')
+    ).map(({ name, params, children }) => ({
+      type: 'SnippetBlock' as const,
+      name,
+      params: params.length > 0 ? params : undefined,
       children
     }));
   })

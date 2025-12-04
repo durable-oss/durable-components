@@ -7,6 +7,57 @@ import { parse as acornParse } from 'acorn';
 import { CompilerError } from '../../types/compiler';
 
 /**
+ * Strip TypeScript type annotations from an expression
+ * Handles common patterns like (param: Type), variable: Type, <Type>value, etc.
+ */
+function stripTypeAnnotations(expr: string): string {
+  let result = expr;
+
+  // Remove type annotations from arrow function parameters: (e: Event) => ... → (e) => ...
+  // Also handles multiple params: (a: string, b: number) => ...
+  result = result.replace(/\(([^)]+)\)\s*=>/g, (match, params) => {
+    const cleanedParams = params
+      .split(',')
+      .map((param: string) => {
+        // Remove type annotation after colon
+        const colonIndex = param.indexOf(':');
+        if (colonIndex !== -1) {
+          return param.substring(0, colonIndex).trim();
+        }
+        return param.trim();
+      })
+      .join(', ');
+    return `(${cleanedParams}) =>`;
+  });
+
+  // Remove type annotations from regular function parameters: function(e: Event)
+  result = result.replace(/function\s*\(([^)]+)\)/g, (match, params) => {
+    const cleanedParams = params
+      .split(',')
+      .map((param: string) => {
+        const colonIndex = param.indexOf(':');
+        if (colonIndex !== -1) {
+          return param.substring(0, colonIndex).trim();
+        }
+        return param.trim();
+      })
+      .join(', ');
+    return `function(${cleanedParams})`;
+  });
+
+  // Remove return type annotations: (): Type => ... → () => ...
+  result = result.replace(/\)\s*:\s*[A-Za-z_$][\w$]*(?:<[^>]+>)?(?:\[\])*\s*=>/g, ') =>');
+
+  // Remove type assertions: value as Type → value
+  result = result.replace(/\s+as\s+[A-Za-z_$][\w$]*(?:<[^>]+>)?(?:\[\])*(?=\s|$|[;,)\]}])/g, '');
+
+  // Remove generic type parameters: Array<string> → Array (simple version, doesn't handle nested)
+  // We keep this simple to avoid breaking valid code
+
+  return result;
+}
+
+/**
  * Parse JavaScript expression using Acorn
  */
 export function parseExpression(expr: string): any {
@@ -36,10 +87,28 @@ export function parseExpression(expr: string): any {
   }
 
   try {
-    const ast = acornParse(trimmedExpr, {
-      ecmaVersion: 2022,
-      sourceType: 'module'
-    });
+    // Strip TypeScript type annotations before parsing
+    const cleanedExpr = stripTypeAnnotations(trimmedExpr);
+
+    // Try to parse as-is first
+    let ast;
+    try {
+      ast = acornParse(cleanedExpr, {
+        ecmaVersion: 2022,
+        sourceType: 'module'
+      });
+    } catch (firstError) {
+      // If it starts with { and ends with }, it might be an object literal
+      // Try wrapping in parentheses to make it a valid expression
+      if (cleanedExpr.startsWith('{') && cleanedExpr.endsWith('}')) {
+        ast = acornParse(`(${cleanedExpr})`, {
+          ecmaVersion: 2022,
+          sourceType: 'module'
+        });
+      } else {
+        throw firstError;
+      }
+    }
 
     if (!ast || typeof ast !== 'object') {
       throw new CompilerError(

@@ -10,8 +10,9 @@ import { CompilerError } from '../../types/compiler';
 // Import all parsers
 import { textNode, mustacheTag, commentNode } from './basic-nodes';
 import { renderBlock, constTag, htmlTag, debugTag } from './directives';
-import { ifBlock, eachBlock, keyBlock, setTemplateNodeParser as setBlockTemplateNode } from './blocks';
+import { ifBlock, eachBlock, keyBlock, snippetBlock, setTemplateNodeParser as setBlockTemplateNode } from './blocks';
 import { element, setTemplateNodeParser as setElementTemplateNode } from './elements';
+import { dceElement, dceWindow, dceBoundary, dceHead, setTemplateNodeParser as setDceTemplateNode } from './dce-elements';
 
 const optWhitespace = P.optWhitespace;
 
@@ -25,10 +26,15 @@ const templateNode: P.Parser<TemplateASTNode> = P.lazy(() =>
     ifBlock,
     eachBlock,
     keyBlock,
+    snippetBlock,
     renderBlock,
     constTag,
     htmlTag,
     debugTag,
+    dceElement,   // Try dce: elements before regular elements
+    dceWindow,
+    dceBoundary,
+    dceHead,
     element,
     mustacheTag,
     textNode
@@ -38,6 +44,7 @@ const templateNode: P.Parser<TemplateASTNode> = P.lazy(() =>
 // Set up the forward references for blocks and elements
 setBlockTemplateNode(templateNode);
 setElementTemplateNode(templateNode);
+setDceTemplateNode(templateNode);
 
 /**
  * Main template parser

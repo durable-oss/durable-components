@@ -93,12 +93,14 @@ export type TemplateASTNodeType =
   | 'IfBlock'
   | 'EachBlock'
   | 'KeyBlock'
+  | 'SnippetBlock'
   | 'Slot'
   | 'RenderBlock'
   | 'ConstTag'
   | 'HtmlTag'
   | 'DebugTag'
-  | 'Comment';
+  | 'Comment'
+  | 'DceElement';
 
 /**
  * Base Template AST Node
@@ -300,12 +302,39 @@ export interface KeyBlockASTNode extends BaseTemplateNode {
 }
 
 /**
+ * Snippet block (e.g., {#snippet name(params)}...{/snippet})
+ */
+export interface SnippetBlockASTNode extends BaseTemplateNode {
+  type: 'SnippetBlock';
+  name: string; // Snippet name
+  params?: string[]; // Parameter names
+  children: TemplateASTNode[];
+}
+
+/**
  * Comment node (e.g., <!-- comment -->)
  */
 export interface CommentASTNode extends BaseTemplateNode {
   type: 'Comment';
   data: string; // Comment content
 }
+
+/**
+ * dce: elements - Special elements with plugin-based implementation
+ * Types: element, window, boundary, head
+ */
+export interface DceElementASTNode extends BaseTemplateNode {
+  type: 'DceElement';
+  kind: 'element' | 'window' | 'boundary' | 'head';
+  tagExpression?: AcornNode; // For dce:element - expression for the tag name
+  attributes: TemplateAttribute[];
+  children: TemplateASTNode[];
+}
+
+// Type aliases for backward compatibility and convenience
+export type DceWindowASTNode = DceElementASTNode & { kind: 'window' };
+export type DceBoundaryASTNode = DceElementASTNode & { kind: 'boundary' };
+export type DceHeadASTNode = DceElementASTNode & { kind: 'head' };
 
 /**
  * Union type for all template AST nodes
@@ -318,12 +347,14 @@ export type TemplateASTNode =
   | IfBlockASTNode
   | EachBlockASTNode
   | KeyBlockASTNode
+  | SnippetBlockASTNode
   | SlotASTNode
   | RenderBlockASTNode
   | ConstTagASTNode
   | HtmlTagASTNode
   | DebugTagASTNode
-  | CommentASTNode;
+  | CommentASTNode
+  | DceElementASTNode;
 
 /**
  * Complete Durable Component AST (D-AST)

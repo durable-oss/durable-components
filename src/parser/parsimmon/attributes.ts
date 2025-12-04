@@ -68,14 +68,23 @@ export const attribute: IndexedParser<TemplateAttribute> = P.seqObj<any>(
   ['start', P.index],
   ['name', dynamicAttributeName],
   optWhitespace,
-  ['hasValue', P.string('=').result(true).fallback(false)],
-  ['value', P.alt(
-    optWhitespace.then(attributeValue),
-    P.succeed([{ type: 'Text' as const, data: '' }])
-  )],
+  ['hasEquals', P.string('=').result(true).fallback(false)],
   ['end', P.index]
-).chain(({ start, end, name, hasValue, value }): P.Parser<TemplateAttribute & { start: number; end: number }> => {
-  if (!hasValue) {
+).chain(({ start, end, name, hasEquals }): P.Parser<TemplateAttribute & { start: number; end: number }> => {
+  if (!hasEquals) {
+    // Check for shorthand directives (bind:value -> bind:value={value})
+    if (name.startsWith('bind:')) {
+      const bindName = name.slice(5);
+      return P.succeed({
+        type: 'Binding' as const,
+        name: bindName,
+        expression: parseExpression(bindName),
+        start,
+        end
+      });
+    }
+
+    // Regular attribute without value (e.g., disabled, checked)
     return P.succeed({
       type: 'Attribute' as const,
       name,
@@ -85,84 +94,83 @@ export const attribute: IndexedParser<TemplateAttribute> = P.seqObj<any>(
     });
   }
 
-  // If hasValue is true, we must have a valid value (not empty from fallback)
-  if (value.length === 1 && value[0].type === 'Text' && value[0].data === '') {
-    // Check if this was from the fallback - this means we had = but no value
-    return P.fail('Expected attribute value after "="');
-  }
+  // Has equals sign, must parse value
+  return optWhitespace.then(attributeValue).chain((value): P.Parser<TemplateAttribute & { start: number; end: number }> => {
+    // Note: Empty quoted strings like class="" are valid, so we don't fail on them
 
-  // Parse event handlers (on:event|modifier={handler})
-  if (name.startsWith('on:')) {
-    const fullName = name.slice(3); // e.g., "click|preventDefault|stopPropagation"
-    const parts = fullName.split('|');
-    const eventName = parts[0];
-    const modifiers = parts.length > 1 ? parts.slice(1) : undefined;
+    // Parse event handlers (on:event|modifier={handler})
+    if (name.startsWith('on:')) {
+      const fullName = name.slice(3); // e.g., "click|preventDefault|stopPropagation"
+      const parts = fullName.split('|');
+      const eventName = parts[0];
+      const modifiers = parts.length > 1 ? parts.slice(1) : undefined;
 
-    const expr = value[0].type === 'MustacheTag' ? value[0].expression : null;
-    if (!expr) {
-      return P.fail('Event handler requires expression');
+      const expr = value[0].type === 'MustacheTag' ? value[0].expression : null;
+      if (!expr) {
+        return P.fail('Event handler requires expression');
+      }
+      return P.succeed({
+        type: 'EventHandler' as const,
+        name: eventName,
+        expression: expr,
+        modifiers,
+        start,
+        end
+      });
     }
-    return P.succeed({
-      type: 'EventHandler' as const,
-      name: eventName,
-      expression: expr,
-      modifiers,
-      start,
-      end
-    });
-  }
 
-  // Parse bindings (bind:prop={value})
-  if (name.startsWith('bind:')) {
-    const bindName = name.slice(5);
-    const expr = value[0].type === 'MustacheTag' ? value[0].expression : null;
-    if (!expr) {
-      return P.fail('Binding requires expression');
+    // Parse bindings (bind:prop={value})
+    if (name.startsWith('bind:')) {
+      const bindName = name.slice(5);
+      const expr = value[0].type === 'MustacheTag' ? value[0].expression : null;
+      if (!expr) {
+        return P.fail('Binding requires expression');
+      }
+      return P.succeed({
+        type: 'Binding' as const,
+        name: bindName,
+        expression: expr,
+        start,
+        end
+      });
     }
-    return P.succeed({
-      type: 'Binding' as const,
-      name: bindName,
-      expression: expr,
-      start,
-      end
-    });
-  }
 
-  // Parse class directives (class:name={condition})
-  if (name.startsWith('class:')) {
-    const className = name.slice(6);
-    const expr = value[0].type === 'MustacheTag' ? value[0].expression : null;
-    if (!expr) {
-      return P.fail('Class directive requires expression');
+    // Parse class directives (class:name={condition})
+    if (name.startsWith('class:')) {
+      const className = name.slice(6);
+      const expr = value[0].type === 'MustacheTag' ? value[0].expression : null;
+      if (!expr) {
+        return P.fail('Class directive requires expression');
+      }
+      return P.succeed({
+        type: 'Class' as const,
+        name: className,
+        expression: expr,
+        start,
+        end
+      });
     }
+
+    // Parse style directives (style:property={value} or style:border-{side}={value})
+    if (name.startsWith('style:')) {
+      const styleName = name.slice(6);
+      const styleValue = value[0].type === 'MustacheTag' ? value[0].expression : value[0].data;
+      return P.succeed({
+        type: 'StyleDirective' as const,
+        name: styleName,
+        value: styleValue,
+        start,
+        end
+      });
+    }
+
     return P.succeed({
-      type: 'Class' as const,
-      name: className,
-      expression: expr,
+      type: 'Attribute' as const,
+      name,
+      value,
       start,
       end
-    });
-  }
-
-  // Parse style directives (style:property={value} or style:border-{side}={value})
-  if (name.startsWith('style:')) {
-    const styleName = name.slice(6);
-    const styleValue = value[0].type === 'MustacheTag' ? value[0].expression : value[0].data;
-    return P.succeed({
-      type: 'StyleDirective' as const,
-      name: styleName,
-      value: styleValue,
-      start,
-      end
-    });
-  }
-
-  return P.succeed({
-    type: 'Attribute' as const,
-    name,
-    value,
-    start,
-    end
+    } as TemplateAttribute & { start: number; end: number });
   });
 });
 

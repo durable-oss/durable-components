@@ -103,7 +103,7 @@ function transform(ast) {
         if (!Array.isArray(ast.template.children)) {
             throw new Error('transform: ast.template.children must be an array');
         }
-        const transformedTemplate = (0, template_transformer_1.transformTemplate)(ast.template.children);
+        const { template: transformedTemplate, snippets } = (0, template_transformer_1.transformTemplate)(ast.template.children);
         // Defensive: validate transformed template
         if (!transformedTemplate || typeof transformedTemplate !== 'object') {
             throw new Error('transform: transformTemplate returned invalid result');
@@ -112,6 +112,7 @@ function transform(ast) {
             throw new Error('transform: transformed template missing type property');
         }
         ir.template = transformedTemplate;
+        ir.snippets = snippets;
         // Extract refs from template (bind:this directives)
         ir.refs = extractRefsFromTemplate(ir.template);
     }

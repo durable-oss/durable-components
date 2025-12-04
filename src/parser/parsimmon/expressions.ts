@@ -66,3 +66,24 @@ export const expression: P.Parser<string> = balancedBraces;
  */
 export const identifier = P.regexp(/[a-zA-Z_$][a-zA-Z0-9_$]*/);
 export const attributeName = P.regexp(/[a-zA-Z_$:][a-zA-Z0-9_$:|\-]*/);
+
+/**
+ * Destructuring pattern parser
+ * Matches array destructuring [a, b], object destructuring {a, b}, or simple identifiers
+ */
+export const destructuringPattern: P.Parser<string> = P.lazy(() => {
+  // Array destructuring: [a, b, c]
+  const arrayPattern = P.string('[')
+    .then(P.regexp(/[^\]]+/))
+    .skip(P.string(']'))
+    .map(content => '[' + content + ']');
+
+  // Object destructuring: {a, b, c}
+  const objectPattern = P.string('{')
+    .then(P.regexp(/[^}]+/))
+    .skip(P.string('}'))
+    .map(content => '{' + content + '}');
+
+  // Simple identifier
+  return P.alt(arrayPattern, objectPattern, identifier);
+});

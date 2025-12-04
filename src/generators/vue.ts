@@ -313,6 +313,18 @@ function generateTemplate(node: TemplateNode, ctx: GeneratorContext, depth: numb
     case 'comment':
       return `<!-- ${node.content} -->`;
 
+    case 'dce-element':
+      return generateDceElement(node, ctx, depth);
+
+    case 'dce-window':
+      return generateDceWindow(node, ctx);
+
+    case 'dce-boundary':
+      return generateDceBoundary(node, ctx, depth);
+
+    case 'dce-head':
+      return generateDceHead(node, ctx, depth);
+
     default:
       return '';
   }
@@ -587,4 +599,145 @@ function transformTemplateExpression(expr: string, ctx: GeneratorContext): strin
   // In Vue templates, refs are automatically unwrapped, so no need to add .value
 
   return transformed;
+}
+
+/**
+ * Generate dce:element (dynamic component)
+ */
+function generateDceElement(node: any, ctx: GeneratorContext, depth: number): string {
+  const { tagExpression, attributes = [], bindings = {}, children = [] } = node;
+
+  // Transform the tag expression
+  const componentIs = transformTemplateExpression(tagExpression, ctx);
+
+  // Collect all attributes
+  const attrs: string[] = [];
+
+  // Vue uses :is directive for dynamic components
+  attrs.push(`:is="${componentIs}"`);
+
+  // Handle bindings
+  for (const [key, value] of Object.entries(bindings)) {
+    const valueStr = String(value);
+    const isStaticString = (valueStr.startsWith('"') && valueStr.endsWith('"')) ||
+                           (valueStr.startsWith("'") && valueStr.endsWith("'"));
+
+    if (isStaticString) {
+      const staticValue = valueStr.slice(1, -1);
+      attrs.push(`${key}="${staticValue}"`);
+    } else {
+      const transformedValue = transformTemplateExpression(valueStr, ctx);
+      attrs.push(`:${key}="${transformedValue}"`);
+    }
+  }
+
+  // Handle attributes
+  for (const attr of attributes) {
+    if (attr.name.startsWith('on:')) {
+      const eventName = attr.name.slice(3);
+      const handler = transformTemplateExpression(attr.value, ctx);
+      const vueModifiers = attr.modifiers && attr.modifiers.length > 0
+        ? '.' + attr.modifiers.map((mod: string) => {
+            switch (mod) {
+              case 'preventDefault': return 'prevent';
+              case 'stopPropagation': return 'stop';
+              case 'stopImmediatePropagation': return 'stop';
+              default: return mod;
+            }
+          }).join('.')
+        : '';
+      attrs.push(`@${eventName}${vueModifiers}="${handler}"`);
+    } else if (attr.name.startsWith('bind:')) {
+      const propName = attr.name.slice(5);
+      const varName = attr.value.replace('state.', '');
+      if (propName === 'value' || propName === 'checked') {
+        attrs.push(`v-model="${varName}"`);
+      } else {
+        attrs.push(`v-model:${propName}="${varName}"`);
+      }
+    } else if (attr.name.startsWith('class:')) {
+      const className = attr.name.slice(6);
+      const condition = transformTemplateExpression(attr.value, ctx);
+      attrs.push(`:class="{ '${className}': ${condition} }"`);
+    } else {
+      attrs.push(`${attr.name}="${attr.value}"`);
+    }
+  }
+
+  const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+
+  // Handle children
+  if (children.length === 0) {
+    return `<component${attrsStr} />`;
+  }
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  if (!childrenHTML.trim()) {
+    return `<component${attrsStr} />`;
+  }
+
+  const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+
+  if (hasMultipleLines) {
+    return `<component${attrsStr}>\n${indent(childrenHTML)}\n</component>`;
+  } else {
+    return `<component${attrsStr}>${childrenHTML}</component>`;
+  }
+}
+
+/**
+ * Generate dce:window (window event handlers)
+ */
+function generateDceWindow(node: any, ctx: GeneratorContext): string {
+  // Vue doesn't have a built-in window directive
+  // We need to use onMounted/onUnmounted in the script
+  // For now, return empty string as this needs script-level handling
+  // TODO: Refactor to properly inject window event handlers
+  return '';
+}
+
+/**
+ * Generate dce:boundary (error boundary)
+ */
+function generateDceBoundary(node: any, ctx: GeneratorContext, depth: number): string {
+  // Vue 3 has onErrorCaptured hook for error boundaries
+  // Wrap children in a component with error handling
+  const { children = [], attributes = [] } = node;
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  // Find the onerror handler if specified
+  let onError = 'console.error';
+  for (const attr of attributes) {
+    if (attr.name === 'onerror') {
+      onError = transformTemplateExpression(attr.value, ctx);
+    }
+  }
+
+  // Vue doesn't have a built-in ErrorBoundary component
+  // Users would need to create a wrapper component
+  return `<ErrorBoundary :on-error="${onError}">\n${indent(childrenHTML)}\n</ErrorBoundary>`;
+}
+
+/**
+ * Generate dce:head (document head)
+ */
+function generateDceHead(node: any, ctx: GeneratorContext, depth: number): string {
+  // Vue uses @vueuse/head or similar libraries for head management
+  // Generate using Teleport to head
+  const { children = [] } = node;
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  return `<Teleport to="head">\n${indent(childrenHTML)}\n</Teleport>`;
 }

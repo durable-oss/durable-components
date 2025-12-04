@@ -6,8 +6,10 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.transformTemplate = transformTemplate;
+const dce_elements_1 = require("./dce-elements");
 /**
  * Transform template AST nodes to IR template nodes
+ * Returns both the template and any snippets found
  */
 function transformTemplate(nodes) {
     // Defensive: validate input
@@ -19,28 +21,47 @@ function transformTemplate(nodes) {
     if (nodes.length > MAX_NODES) {
         throw new Error(`transformTemplate: too many nodes (${nodes.length} > ${MAX_NODES})`);
     }
+    const context = { snippets: [], transformNode };
+    // Separate snippet definitions from regular template nodes
+    const templateNodes = nodes.filter(node => node.type !== 'SnippetBlock');
+    const snippetNodes = nodes.filter(node => node.type === 'SnippetBlock');
+    // Process snippets
+    for (const snippetNode of snippetNodes) {
+        const snippet = {
+            name: snippetNode.name,
+            params: snippetNode.params,
+            template: snippetNode.children.map(child => transformNode(child, context))
+        };
+        context.snippets.push(snippet);
+    }
     // If multiple root nodes, wrap in a fragment (div)
-    if (nodes.length === 0) {
+    if (templateNodes.length === 0) {
         return {
-            type: 'element',
-            name: 'div',
-            children: []
+            template: {
+                type: 'element',
+                name: 'div',
+                children: []
+            },
+            snippets: context.snippets
         };
     }
-    if (nodes.length === 1) {
+    if (templateNodes.length === 1) {
         // Defensive: validate single node
-        if (!nodes[0] || typeof nodes[0] !== 'object') {
+        if (!templateNodes[0] || typeof templateNodes[0] !== 'object') {
             throw new Error('transformTemplate: invalid node at index 0');
         }
-        if (!nodes[0].type) {
+        if (!templateNodes[0].type) {
             throw new Error('transformTemplate: node at index 0 missing type');
         }
-        return transformNode(nodes[0]);
+        return {
+            template: transformNode(templateNodes[0], context),
+            snippets: context.snippets
+        };
     }
     // Multiple roots - wrap in fragment
     // Defensive: validate each node before transforming
-    for (let i = 0; i < nodes.length; i++) {
-        const node = nodes[i];
+    for (let i = 0; i < templateNodes.length; i++) {
+        const node = templateNodes[i];
         if (!node || typeof node !== 'object') {
             throw new Error(`transformTemplate: invalid node at index ${i}`);
         }
@@ -49,23 +70,26 @@ function transformTemplate(nodes) {
         }
     }
     return {
-        type: 'element',
-        name: 'div',
-        children: nodes.map((node, index) => {
-            try {
-                return transformNode(node);
-            }
-            catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                throw new Error(`transformTemplate: error transforming node at index ${index}: ${errorMessage}`);
-            }
-        })
+        template: {
+            type: 'element',
+            name: 'div',
+            children: templateNodes.map((node, index) => {
+                try {
+                    return transformNode(node, context);
+                }
+                catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    throw new Error(`transformTemplate: error transforming node at index ${index}: ${errorMessage}`);
+                }
+            })
+        },
+        snippets: context.snippets
     };
 }
 /**
  * Transform a single template node
  */
-function transformNode(node) {
+function transformNode(node, context) {
     // Defensive: validate input
     if (!node || typeof node !== 'object') {
         throw new TypeError('transformNode: node must be an object');
@@ -76,24 +100,24 @@ function transformNode(node) {
     try {
         switch (node.type) {
             case 'Element':
-                return transformElement(node);
+                return transformElement(node, context);
             case 'Text':
                 return transformText(node);
             case 'MustacheTag':
                 return transformMustacheTag(node);
             case 'IfBlock':
-                return transformIfBlock(node);
+                return transformIfBlock(node, context);
             case 'EachBlock':
-                return transformEachBlock(node);
+                return transformEachBlock(node, context);
             case 'KeyBlock':
-                return transformKeyBlock(node);
+                return transformKeyBlock(node, context);
             case 'Slot': {
                 // Defensive: validate Slot node
                 if (typeof node.name !== 'string') {
                     throw new Error('transformNode: Slot node missing valid name');
                 }
                 const fallback = node.children && Array.isArray(node.children)
-                    ? node.children.map(transformNode)
+                    ? node.children.map(child => transformNode(child, context))
                     : [];
                 return {
                     type: 'slot',
@@ -101,6 +125,21 @@ function transformNode(node) {
                     fallback,
                     // For unist compatibility, use children field
                     children: fallback
+                };
+            }
+            case 'SnippetBlock': {
+                // Nested snippets should be collected in context
+                const snippetNode = node;
+                const snippet = {
+                    name: snippetNode.name,
+                    params: snippetNode.params,
+                    template: snippetNode.children.map(child => transformNode(child, context))
+                };
+                context.snippets.push(snippet);
+                // Return empty text node as placeholder
+                return {
+                    type: 'text',
+                    content: ''
                 };
             }
             case 'RenderBlock':
@@ -111,6 +150,15 @@ function transformNode(node) {
                 return transformHtmlTag(node);
             case 'DebugTag':
                 return transformDebugTag(node);
+            case 'DceElement': {
+                // Handle dce: elements through plugin system
+                const dceNode = node; // DceElementASTNode
+                const plugin = (0, dce_elements_1.getDcePlugin)(dceNode.kind);
+                if (!plugin) {
+                    throw new Error(`No plugin found for dce:${dceNode.kind}`);
+                }
+                return plugin.transform(dceNode, context);
+            }
             case 'Comment':
                 return transformComment(node);
             default:
@@ -131,11 +179,11 @@ function transformNode(node) {
 /**
  * Transform element node
  */
-function transformElement(node) {
+function transformElement(node, context) {
     const element = {
         type: 'element',
         name: node.name,
-        children: node.children.map(transformNode)
+        children: node.children.map(child => transformNode(child, context))
     };
     // Transform attributes
     const attributes = [];
@@ -244,10 +292,10 @@ function transformMustacheTag(node) {
 /**
  * Transform if block
  */
-function transformIfBlock(node) {
+function transformIfBlock(node, context) {
     const condition = extractExpression(node.expression);
-    const consequent = node.children.map(transformNode);
-    const alternate = node.else ? node.else.children.map(transformNode) : undefined;
+    const consequent = node.children.map(child => transformNode(child, context));
+    const alternate = node.else ? node.else.children.map(child => transformNode(child, context)) : undefined;
     const ifNode = {
         type: 'if',
         condition: prefixExpression(condition),
@@ -261,7 +309,7 @@ function transformIfBlock(node) {
 /**
  * Transform each block
  */
-function transformEachBlock(node) {
+function transformEachBlock(node, context) {
     const expr = extractExpression(node.expression);
     return {
         type: 'each',
@@ -269,7 +317,7 @@ function transformEachBlock(node) {
         itemName: node.context,
         indexName: node.index,
         key: node.key ? extractExpression(node.key) : undefined,
-        children: node.children.map(transformNode)
+        children: node.children.map(child => transformNode(child, context))
     };
 }
 /**
@@ -519,8 +567,8 @@ function transformDebugTag(node) {
 /**
  * Transform {#key} block
  */
-function transformKeyBlock(node) {
-    const children = node.children.map(transformNode);
+function transformKeyBlock(node, context) {
+    const children = node.children.map(child => transformNode(child, context));
     return {
         type: 'key',
         expression: extractExpression(node.expression),

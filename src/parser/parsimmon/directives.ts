@@ -15,16 +15,13 @@ import { CompilerError } from '../../types/compiler';
 
 const optWhitespace = P.optWhitespace;
 
-// Simple expression parser that stops at }
-const simpleExpression: P.Parser<string> = P.regexp(/[^}]+/);
-
 /**
  * {@render snippet()} directive parser
  */
 export const renderBlock: IndexedParser<RenderBlockASTNode> = indexed(
   P.string('{@render')
     .then(optWhitespace)
-    .then(simpleExpression)
+    .then(expression)
     .skip(P.string('}'))
     .map(expr => {
       const trimmedExpr = expr.trim();
@@ -51,9 +48,21 @@ export const renderBlock: IndexedParser<RenderBlockASTNode> = indexed(
           }
         }
 
+        // Handle optional chaining: children?.()
+        if (actualExpr.type === 'ChainExpression') {
+          actualExpr = actualExpr.expression;
+        }
+
         if (actualExpr.type === 'CallExpression') {
-          if (actualExpr.callee.type === 'Identifier') {
-            snippet = actualExpr.callee.name;
+          // Handle optional call: foo?.()
+          let callee = actualExpr.callee;
+          if (callee.type === 'Identifier') {
+            snippet = callee.name;
+          } else if (callee.type === 'MemberExpression') {
+            // For member expressions like obj.method(), use the full expression
+            snippet = trimmedExpr.split('(')[0].trim();
+          } else {
+            snippet = trimmedExpr.split('(')[0].trim();
           }
           args = actualExpr.arguments || [];
         } else if (actualExpr.type === 'Identifier') {
@@ -125,7 +134,7 @@ export const constTag: IndexedParser<ConstTagASTNode> = indexed(
 export const htmlTag: IndexedParser<HtmlTagASTNode> = indexed(
   P.string('{@html')
     .then(optWhitespace)
-    .then(simpleExpression)
+    .then(expression)
     .skip(P.string('}'))
     .map(expr => {
       if (!expr || expr.trim().length === 0) {
@@ -150,7 +159,7 @@ export const htmlTag: IndexedParser<HtmlTagASTNode> = indexed(
 export const debugTag: IndexedParser<DebugTagASTNode> = indexed(
   P.string('{@debug')
     .then(optWhitespace)
-    .then(simpleExpression.fallback(''))
+    .then(expression.fallback(''))
     .skip(P.string('}'))
     .map(vars => {
       const identifiers = vars.trim()

@@ -248,6 +248,18 @@ function generateTemplate(node: TemplateNode, depth: number = 0): string {
     case 'comment':
       return `<!-- ${node.content} -->`;
 
+    case 'dce-element':
+      return generateDceElement(node, depth);
+
+    case 'dce-window':
+      return generateDceWindow(node);
+
+    case 'dce-boundary':
+      return generateDceBoundary(node, depth);
+
+    case 'dce-head':
+      return generateDceHead(node, depth);
+
     default:
       return '';
   }
@@ -407,4 +419,151 @@ function transformExpression(expr: string): string {
   transformed = transformed.replace(/\bfunctions\./g, '');
 
   return transformed;
+}
+
+/**
+ * Generate dce:element (dynamic element)
+ */
+function generateDceElement(node: any, depth: number): string {
+  const { tagExpression, attributes = [], bindings = {}, children = [] } = node;
+
+  // Transform the tag expression
+  const tag = transformExpression(tagExpression);
+
+  // Collect all attributes
+  const attrs: string[] = [];
+
+  // Svelte 5 uses this attribute for dynamic elements
+  attrs.push(`this={${tag}}`);
+
+  // Handle bindings
+  for (const [key, value] of Object.entries(bindings)) {
+    let valueStr = transformExpression(String(value));
+    valueStr = valueStr.replace(/\bclass\b/g, 'className');
+    attrs.push(`${key}=${valueStr}`);
+  }
+
+  // Handle attributes
+  for (const attr of attributes) {
+    if (attr.name.startsWith('on:')) {
+      const eventName = attr.name.slice(3);
+      const handler = transformExpression(attr.value);
+      const finalHandler = attr.modifiers && attr.modifiers.length > 0
+        ? generateModifierWrapper(attr.modifiers, handler)
+        : handler;
+      attrs.push(`on${eventName}={${finalHandler}}`);
+    } else if (attr.name.startsWith('bind:')) {
+      const varName = transformExpression(attr.value);
+      attrs.push(`${attr.name}={${varName}}`);
+    } else if (attr.name.startsWith('class:')) {
+      const condition = transformExpression(attr.value);
+      attrs.push(`${attr.name}={${condition}}`);
+    } else {
+      attrs.push(`${attr.name}="${attr.value}"`);
+    }
+  }
+
+  const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+
+  // Handle children
+  if (children.length === 0) {
+    return `<svelte:element${attrsStr} />`;
+  }
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  if (!childrenHTML.trim()) {
+    return `<svelte:element${attrsStr} />`;
+  }
+
+  const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+
+  if (hasMultipleLines) {
+    return `<svelte:element${attrsStr}>\n${indent(childrenHTML)}\n</svelte:element>`;
+  } else {
+    return `<svelte:element${attrsStr}>${childrenHTML}</svelte:element>`;
+  }
+}
+
+/**
+ * Generate dce:window (window event handlers)
+ */
+function generateDceWindow(node: any): string {
+  const { attributes = [] } = node;
+
+  // Collect all attributes
+  const attrs: string[] = [];
+
+  for (const attr of attributes) {
+    if (attr.name.startsWith('on:')) {
+      const eventName = attr.name.slice(3);
+      const handler = transformExpression(attr.value);
+      const finalHandler = attr.modifiers && attr.modifiers.length > 0
+        ? generateModifierWrapper(attr.modifiers, handler)
+        : handler;
+      attrs.push(`on${eventName}={${finalHandler}}`);
+    }
+  }
+
+  const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+
+  return `<svelte:window${attrsStr} />`;
+}
+
+/**
+ * Generate dce:boundary (error boundary)
+ */
+function generateDceBoundary(node: any, depth: number): string {
+  // Svelte doesn't have a built-in error boundary
+  // Users would need to create a wrapper component
+  const { children = [], attributes = [] } = node;
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  // Find the onerror handler if specified
+  let onError = 'console.error';
+  for (const attr of attributes) {
+    if (attr.name === 'onerror') {
+      onError = transformExpression(attr.value);
+    }
+  }
+
+  const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+
+  if (hasMultipleLines) {
+    return `<ErrorBoundary onerror={${onError}}>\n${indent(childrenHTML)}\n</ErrorBoundary>`;
+  } else {
+    return `<ErrorBoundary onerror={${onError}}>${childrenHTML}</ErrorBoundary>`;
+  }
+}
+
+/**
+ * Generate dce:head (document head)
+ */
+function generateDceHead(node: any, depth: number): string {
+  // Svelte has built-in <svelte:head> for document head
+  const { children = [] } = node;
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  if (!childrenHTML.trim()) {
+    return '<svelte:head />';
+  }
+
+  const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+
+  if (hasMultipleLines) {
+    return `<svelte:head>\n${indent(childrenHTML)}\n</svelte:head>`;
+  } else {
+    return `<svelte:head>${childrenHTML}</svelte:head>`;
+  }
 }

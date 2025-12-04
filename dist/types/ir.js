@@ -27,6 +27,7 @@ function createEmptyIR(name) {
         effects: [],
         refs: [],
         functions: [],
+        snippets: [],
         template: {
             type: 'element',
             name: 'div',
