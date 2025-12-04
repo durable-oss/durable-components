@@ -34,9 +34,14 @@ export interface DurableParserOptions {
 export const durableParser: Plugin<[DurableParserOptions?], string, DurableComponentIR> = function (
   options = {}
 ) {
-  const parser = (doc: string): DurableComponentIR => {
+  const parser = (doc: string, file: any): DurableComponentIR => {
     const source = String(doc);
     const filename = options.filename || 'Component.dce';
+
+    // Set the file path so other plugins can access it
+    if (filename && file) {
+      file.path = filename;
+    }
 
     // Phase 1: Parse source into D-AST
     const ast = parse(source, { filename });

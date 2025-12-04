@@ -432,10 +432,13 @@ function generateIf(node: any, ctx: GeneratorContext, depth: number): string {
   if (!node.alternate) {
     // Find the first element to attach v-if to
     const lines = consequent.split('\n');
-    if (lines.length > 0 && lines[0].trim().startsWith('<')) {
-      // Insert v-if into the first tag
-      const firstLine = lines[0].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-      return [firstLine, ...lines.slice(1)].join('\n');
+    const firstNonEmptyLine = lines.findIndex((line: string) => line.trim().length > 0);
+
+    if (firstNonEmptyLine >= 0 && lines[firstNonEmptyLine].trim().startsWith('<')) {
+      // Insert v-if into the first tag (after opening <tag)
+      const firstLine = lines[firstNonEmptyLine].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,`$1 v-if="${condition}"$2`);
+      const result = [...lines.slice(0, firstNonEmptyLine), firstLine, ...lines.slice(firstNonEmptyLine + 1)].join('\n');
+      return result;
     }
     return consequent;
   }
@@ -449,13 +452,24 @@ function generateIf(node: any, ctx: GeneratorContext, depth: number): string {
   const consequentLines = consequent.split('\n');
   const alternateLines = alternate.split('\n');
 
-  const firstConsequentLine = consequentLines[0].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-  const firstAlternateLine = alternateLines[0].replace(/^(\s*<\w+)/, `$1 v-else`);
+  const firstConsequentIdx = consequentLines.findIndex((line: string) => line.trim().startsWith('<'));
+  const firstAlternateIdx = alternateLines.findIndex((line: string) => line.trim().startsWith('<'));
 
-  const consequentBlock = [firstConsequentLine, ...consequentLines.slice(1)].join('\n');
-  const alternateBlock = [firstAlternateLine, ...alternateLines.slice(1)].join('\n');
+  if (firstConsequentIdx >= 0) {
+    consequentLines[firstConsequentIdx] = consequentLines[firstConsequentIdx].replace(
+      /^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,
+      `$1 v-if="${condition}"$2`
+    );
+  }
 
-  return `${consequentBlock}\n${alternateBlock}`;
+  if (firstAlternateIdx >= 0) {
+    alternateLines[firstAlternateIdx] = alternateLines[firstAlternateIdx].replace(
+      /^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,
+      `$1 v-else$2`
+    );
+  }
+
+  return `${consequentLines.join('\n')}\n${alternateLines.join('\n')}`;
 }
 
 /**
@@ -486,9 +500,14 @@ function generateEach(node: any, ctx: GeneratorContext, depth: number): string {
 
   // Insert v-for into the first child element
   const childLines = children.split('\n');
-  if (childLines.length > 0 && childLines[0].trim().startsWith('<')) {
-    const firstLine = childLines[0].replace(/^(\s*<\w+)/, `$1 ${vFor}${keyAttr}`);
-    return [firstLine, ...childLines.slice(1)].join('\n');
+  const firstNonEmptyLine = childLines.findIndex((line: string) => line.trim().length > 0);
+
+  if (firstNonEmptyLine >= 0 && childLines[firstNonEmptyLine].trim().startsWith('<')) {
+    const firstLine = childLines[firstNonEmptyLine].replace(
+      /^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,
+      `$1 ${vFor}${keyAttr}$2`
+    );
+    return [...childLines.slice(0, firstNonEmptyLine), firstLine, ...childLines.slice(firstNonEmptyLine + 1)].join('\n');
   }
 
   return children;

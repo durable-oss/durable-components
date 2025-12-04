@@ -9,6 +9,8 @@ import type { DurableComponentIR } from '../types/ir';
 import type { CompilerTarget, StyleMode } from '../types/compiler';
 import { analyzeComponentReferences, filterDCEComponents, type ComponentReference } from './component-analyzer';
 import { resolveComponentPath, getBaseDir } from '../utils/path-resolver';
+import { parse } from '../parser';
+import { transform } from './index';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -178,9 +180,6 @@ export function flattenComponentReferences(
  * @returns The component's IR
  */
 function parseComponentSource(source: string, filename: string): DurableComponentIR {
-  const { parse } = require('../parser');
-  const { transform } = require('./index');
-
   const ast = parse(source, { filename });
   return transform(ast);
 }

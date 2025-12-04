@@ -176,16 +176,15 @@ function transformElement(node: ElementASTNode): ElementNode {
   for (const attr of node.attributes) {
     if (attr.type === 'EventHandler') {
       // Event handler: on:click={handler} or on:click|preventDefault={handler}
-      // Parse modifiers from event name (e.g., "click|preventDefault|stopPropagation")
-      const parts = attr.name.split('|');
-      const eventName = parts[0];
-      const modifiers = parts.slice(1);
+      // Modifiers are now parsed by the parser
+      const eventName = attr.name;
+      const modifiers = attr.modifiers;
 
       const expr = extractExpression(attr.expression);
       attributes.push({
         name: `on:${eventName}`,
         value: `functions.${expr}`,
-        modifiers: modifiers.length > 0 ? modifiers : undefined
+        modifiers: modifiers && modifiers.length > 0 ? modifiers : undefined
       });
     } else if (attr.type === 'Binding') {
       // Two-way binding: bind:value={name}

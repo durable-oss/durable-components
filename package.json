@@ -1,5 +1,5 @@
 {
-  "name": "@durable-oss/durable-components",
+  "name": "durable-components",
   "version": "0.1.3",
   "description": "A Durable Component Compiler - compile once, run anywhere",
   "main": "dist/index.js",
@@ -42,12 +42,14 @@
     "acorn-typescript": "^1.4.13",
     "commander": "^11.1.0",
     "magic-string": "^0.30.5",
+    "parsimmon": "^1.18.1",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.0.0",
     "vfile": "^6.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.19.25",
+    "@types/parsimmon": "^1.10.9",
     "@vitest/ui": "^4.0.10",
     "typescript": "^5.3.3",
     "vite": "^5.0.0",

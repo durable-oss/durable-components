@@ -88,6 +88,7 @@ export interface StyleBlock extends BaseNode {
 export type TemplateASTNodeType =
   | 'Element'
   | 'Text'
+  | 'Comment'
   | 'MustacheTag'
   | 'IfBlock'
   | 'EachBlock'
@@ -151,6 +152,7 @@ export interface EventAttribute extends BaseNode {
   type: 'EventHandler';
   name: string; // Event name (e.g., 'click')
   expression: AcornNode; // Handler function reference
+  modifiers?: string[]; // Event modifiers (e.g., ['preventDefault', 'stopPropagation'])
 }
 
 /**
@@ -185,6 +187,14 @@ export interface StyleDirective extends BaseNode {
  */
 export interface TextASTNode extends BaseTemplateNode {
   type: 'Text';
+  data: string;
+}
+
+/**
+ * Comment node (e.g., <!-- comment -->)
+ */
+export interface CommentASTNode extends BaseTemplateNode {
+  type: 'Comment';
   data: string;
 }
 
@@ -285,6 +295,7 @@ export interface KeyBlockASTNode extends BaseTemplateNode {
 export type TemplateASTNode =
   | ElementASTNode
   | TextASTNode
+  | CommentASTNode
   | MustacheTagASTNode
   | IfBlockASTNode
   | EachBlockASTNode
