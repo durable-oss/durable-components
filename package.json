@@ -1,7 +1,7 @@
 {
   "name": "durable-components",
-  "version": "0.1.3",
-  "description": "A Durable Component Compiler - compile once, run anywhere",
+  "version": "0.1.4",
+  "description": "Durable Component Compiler - compile once, run on svelte/vue/solid/webcomponents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
