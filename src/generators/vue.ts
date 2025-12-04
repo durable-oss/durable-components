@@ -415,36 +415,46 @@ function generateIf(node: any, ctx: GeneratorContext, depth: number): string {
   const condition = transformTemplateExpression(node.condition, ctx);
   const consequent = node.consequent
     .map((child: any) => generateTemplate(child, ctx, depth))
-    .filter(Boolean)
+    .filter((s: string) => s.trim().length > 0)
     .join('\n');
 
   if (!node.alternate) {
     // Find the first element to attach v-if to
     const lines = consequent.split('\n');
-    if (lines.length > 0 && lines[0].trim().startsWith('<')) {
+    // Find the first line that starts with a tag
+    const firstTagLineIdx = lines.findIndex((line: string) => line.trim().startsWith('<'));
+    if (firstTagLineIdx >= 0) {
       // Insert v-if into the first tag
-      const firstLine = lines[0].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-      return [firstLine, ...lines.slice(1)].join('\n');
+      const firstLine = lines[firstTagLineIdx].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
+      const result = [...lines.slice(0, firstTagLineIdx), firstLine, ...lines.slice(firstTagLineIdx + 1)];
+      return result.join('\n');
     }
     return consequent;
   }
 
   const alternate = node.alternate
     .map((child: any) => generateTemplate(child, ctx, depth))
-    .filter(Boolean)
+    .filter((s: string) => s.trim().length > 0)
     .join('\n');
 
   // Add v-if to consequent and v-else to alternate
   const consequentLines = consequent.split('\n');
   const alternateLines = alternate.split('\n');
 
-  const firstConsequentLine = consequentLines[0].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-  const firstAlternateLine = alternateLines[0].replace(/^(\s*<\w+)/, `$1 v-else`);
+  const firstConsequentLineIdx = consequentLines.findIndex((line: string) => line.trim().startsWith('<'));
+  const firstAlternateLineIdx = alternateLines.findIndex((line: string) => line.trim().startsWith('<'));
 
-  const consequentBlock = [firstConsequentLine, ...consequentLines.slice(1)].join('\n');
-  const alternateBlock = [firstAlternateLine, ...alternateLines.slice(1)].join('\n');
+  if (firstConsequentLineIdx >= 0) {
+    const firstLine = consequentLines[firstConsequentLineIdx].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
+    consequentLines[firstConsequentLineIdx] = firstLine;
+  }
 
-  return `${consequentBlock}\n${alternateBlock}`;
+  if (firstAlternateLineIdx >= 0) {
+    const firstLine = alternateLines[firstAlternateLineIdx].replace(/^(\s*<\w+)/, `$1 v-else`);
+    alternateLines[firstAlternateLineIdx] = firstLine;
+  }
+
+  return `${consequentLines.join('\n')}\n${alternateLines.join('\n')}`;
 }
 
 /**
@@ -458,7 +468,7 @@ function generateEach(node: any, ctx: GeneratorContext, depth: number): string {
 
   const children = node.children
     .map((child: any) => generateTemplate(child, ctx, depth))
-    .filter(Boolean)
+    .filter((s: string) => s.trim().length > 0)
     .join('\n');
 
   // Build v-for directive
@@ -475,9 +485,11 @@ function generateEach(node: any, ctx: GeneratorContext, depth: number): string {
 
   // Insert v-for into the first child element
   const childLines = children.split('\n');
-  if (childLines.length > 0 && childLines[0].trim().startsWith('<')) {
-    const firstLine = childLines[0].replace(/^(\s*<\w+)/, `$1 ${vFor}${keyAttr}`);
-    return [firstLine, ...childLines.slice(1)].join('\n');
+  const firstTagLineIdx = childLines.findIndex((line: string) => line.trim().startsWith('<'));
+  if (firstTagLineIdx >= 0) {
+    const firstLine = childLines[firstTagLineIdx].replace(/^(\s*<\w+)/, `$1 ${vFor}${keyAttr}`);
+    const result = [...childLines.slice(0, firstTagLineIdx), firstLine, ...childLines.slice(firstTagLineIdx + 1)];
+    return result.join('\n');
   }
 
   return children;

@@ -183,9 +183,10 @@ describe('Template Parser', () => {
 
     it('should parse multiple expressions', () => {
       const nodes = parseTemplate('{first} {second}');
-      expect(nodes).toHaveLength(2);
+      expect(nodes).toHaveLength(3); // Includes whitespace text node
       expect(nodes[0].type).toBe('MustacheTag');
-      expect(nodes[1].type).toBe('MustacheTag');
+      expect(nodes[1].type).toBe('Text'); // Whitespace between expressions
+      expect(nodes[2].type).toBe('MustacheTag');
     });
   });
 

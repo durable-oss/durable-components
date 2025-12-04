@@ -2,7 +2,7 @@
  * Template Parser
  *
  * Parses HTML-like template syntax with Svelte-style directives
- * into a template AST.
+ * into a template AST using Parsimmon.
  */
 import type { TemplateASTNode } from '../types/ast';
 /**

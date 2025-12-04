@@ -38,10 +38,12 @@
   "author": "Durable Programming",
   "license": "MIT",
   "dependencies": {
+    "@types/parsimmon": "^1.10.9",
     "acorn": "^8.11.3",
     "acorn-typescript": "^1.4.13",
     "commander": "^11.1.0",
     "magic-string": "^0.30.5",
+    "parsimmon": "^1.18.1",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.0.0",
     "vfile": "^6.0.3"

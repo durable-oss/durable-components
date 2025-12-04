@@ -214,9 +214,10 @@ describe('Parser Enhancements', () => {
       expect(result[0].type).toBe('EachBlock');
       const eachBlock = result[0] as any;
       expect(eachBlock.key).toBeDefined();
-      expect(eachBlock.children).toHaveLength(1);
-      expect(eachBlock.children[0].type).toBe('Element');
-      expect(eachBlock.children[0].attributes[0].name).toBe('style');
+      // Children includes whitespace text nodes from indentation
+      const elementChildren = eachBlock.children.filter((c: any) => c.type === 'Element');
+      expect(elementChildren).toHaveLength(1);
+      expect(elementChildren[0].attributes[0].name).toBe('style');
     });
 
     it('should parse template literals with nested expressions', () => {

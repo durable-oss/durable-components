@@ -43,6 +43,8 @@ exports.flattenComponentReferences = flattenComponentReferences;
 exports.getComponentDependencies = getComponentDependencies;
 const component_analyzer_1 = require("./component-analyzer");
 const path_resolver_1 = require("../utils/path-resolver");
+const parser_1 = require("../parser");
+const index_1 = require("./index");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 /**
@@ -141,10 +143,8 @@ function flattenComponentReferences(ir, options) {
  * @returns The component's IR
  */
 function parseComponentSource(source, filename) {
-    const { parse } = require('../parser');
-    const { transform } = require('./index');
-    const ast = parse(source, { filename });
-    return transform(ast);
+    const ast = (0, parser_1.parse)(source, { filename });
+    return (0, index_1.transform)(ast);
 }
 /**
  * Gets all unique dependencies of a component (transitive closure)

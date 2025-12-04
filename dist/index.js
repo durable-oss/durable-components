@@ -104,7 +104,10 @@ function compile(source, options) {
                 throw new compiler_1.CompilerError(`Unknown target: ${options.target}`, undefined, undefined, 'UNKNOWN_TARGET');
         }
         // Process the source through the unified pipeline
-        const file = finalProcessor.processSync(source);
+        // Create a VFile with the filename if provided
+        const file = options.filename
+            ? finalProcessor.processSync({ value: source, path: options.filename })
+            : finalProcessor.processSync(source);
         // The tree is stored in file.data by the durableTreeStorage plugin
         const tree = file.data.tree;
         const flattenResult = file.data.flatten;
