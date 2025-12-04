@@ -353,7 +353,21 @@ function generateElement(node: any, ctx: GeneratorContext, depth: number): strin
       // Event handler: on:click -> @click
       const eventName = attr.name.slice(3);
       const handler = transformTemplateExpression(attr.value, ctx);
-      attrs.push(`@${eventName}="${handler}"`);
+
+      // Vue has native modifier support: @click.prevent.stop
+      // Map canonical modifier names to Vue's syntax
+      const vueModifiers = attr.modifiers && attr.modifiers.length > 0
+        ? '.' + attr.modifiers.map((mod: string) => {
+            switch (mod) {
+              case 'preventDefault': return 'prevent';
+              case 'stopPropagation': return 'stop';
+              case 'stopImmediatePropagation': return 'stop'; // Vue doesn't have stopImmediate, use stop
+              default: return mod; // Pass through self, once, capture, passive, trusted
+            }
+          }).join('.')
+        : '';
+
+      attrs.push(`@${eventName}${vueModifiers}="${handler}"`);
     } else if (attr.name.startsWith('bind:')) {
       // Two-way binding: bind:value -> v-model
       const propName = attr.name.slice(5);

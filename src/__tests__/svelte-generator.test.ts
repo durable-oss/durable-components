@@ -39,7 +39,7 @@ describe('Svelte 5 Generator', () => {
       expect(result.js.code).toContain('let count = $state(0);');
       expect(result.js.code).toContain('function increment()');
       expect(result.js.code).toContain('count++;');
-      expect(result.js.code).toContain('on:click={increment}');
+      expect(result.js.code).toContain('onclick={increment}');
       expect(result.js.code).toContain('{count}');
     });
 
@@ -501,7 +501,7 @@ describe('Svelte 5 Generator', () => {
         target: 'svelte'
       });
 
-      expect(result.js.code).toContain('<button on:click={handleClick}>Click me</button>');
+      expect(result.js.code).toContain('<button onclick={handleClick}>Click me</button>');
     });
 
     it('should compile a component with multiple event types', () => {
@@ -524,9 +524,9 @@ describe('Svelte 5 Generator', () => {
         target: 'svelte'
       });
 
-      expect(result.js.code).toContain('on:click={handleClick}');
-      expect(result.js.code).toContain('on:mouseover={handleMouseOver}');
-      expect(result.js.code).toContain('on:focus={handleFocus}');
+      expect(result.js.code).toContain('onclick={handleClick}');
+      expect(result.js.code).toContain('onmouseover={handleMouseOver}');
+      expect(result.js.code).toContain('onfocus={handleFocus}');
     });
 
     it('should compile a component with inline event handlers', () => {
@@ -545,7 +545,7 @@ describe('Svelte 5 Generator', () => {
         target: 'svelte'
       });
 
-      expect(result.js.code).toContain('on:click={count++}');
+      expect(result.js.code).toContain('onclick={count++}');
     });
   });
 
@@ -697,6 +697,51 @@ describe('Svelte 5 Generator', () => {
       expect(result.js.code).toContain('{#each items as item, i}');
       expect(result.js.code).toContain('{i}');
       expect(result.js.code).toContain('{item}');
+    });
+
+    it('should compile a component with each blocks with key expression', () => {
+      const source = `
+<script>
+  let items = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]);
+</script>
+
+<template>
+  {#each items as item (item.id)}
+    <li>{item.name}</li>
+  {/each}
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'EachWithKey.dce',
+        target: 'svelte'
+      });
+
+      expect(result.js.code).toContain('{#each items as item (item.id)}');
+      expect(result.js.code).toContain('{item.name}');
+    });
+
+    it('should compile a component with each blocks with index and key expression', () => {
+      const source = `
+<script>
+  let items = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]);
+</script>
+
+<template>
+  {#each items as item, index (item.id)}
+    <li>{index}: {item.name}</li>
+  {/each}
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'EachWithIndexAndKey.dce',
+        target: 'svelte'
+      });
+
+      expect(result.js.code).toContain('{#each items as item, index (item.id)}');
+      expect(result.js.code).toContain('{index}');
+      expect(result.js.code).toContain('{item.name}');
     });
 
     it('should compile a component with each blocks with complex items', () => {
@@ -1067,6 +1112,129 @@ describe('Svelte 5 Generator', () => {
       expect(result.meta?.props).toContain('name');
       expect(result.meta?.props).toContain('age');
       expect(result.meta?.props).toContain('email');
+    });
+  });
+
+  describe('Complex expressions (regression tests)', () => {
+    it('should preserve optional chaining with logical OR in expressions', () => {
+      const source = `
+<script>
+  let error = $state();
+</script>
+
+<template>
+  <p>{error?.message || 'An unexpected error occurred'}</p>
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'OptionalChaining.dce',
+        target: 'svelte'
+      });
+
+      expect(result.js.code).toContain('{error?.message || "An unexpected error occurred"}');
+      expect(result.js.code).not.toContain('{}');
+    });
+
+    it('should preserve compound conditions in if blocks', () => {
+      const source = `
+<script>
+  let showErrorDetails = $state(false);
+  let error = $state();
+</script>
+
+<template>
+  {#if showErrorDetails && error}
+    <div>Error details</div>
+  {/if}
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'CompoundCondition.dce',
+        target: 'svelte'
+      });
+
+      expect(result.js.code).toContain('{#if showErrorDetails && error}');
+      expect(result.js.code).not.toContain('{#if }');
+    });
+
+    it('should preserve complex nested expressions', () => {
+      const source = `
+<script>
+  let errorInfo = $state();
+</script>
+
+<template>
+  {#if errorInfo?.componentStack}
+    <p>{errorInfo.componentStack}</p>
+  {/if}
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'NestedOptional.dce',
+        target: 'svelte'
+      });
+
+      expect(result.js.code).toContain('{#if errorInfo?.componentStack}');
+      expect(result.js.code).toContain('{errorInfo.componentStack}');
+    });
+
+    it('should compile ErrorBoundary-like component correctly', () => {
+      const source = `
+<script>
+  let { showErrorDetails = false } = $props();
+  let error = $state();
+  let errorInfo = $state();
+
+  function stylesToString(obj) {
+    return Object.entries(obj).map(([k, v]) => \`\${k}:\${v}\`).join(';');
+  }
+
+  let messageStyles = $derived(() => ({
+    fontSize: 'var(--text-base)',
+    marginBottom: 'var(--spacing-lg)',
+  }));
+</script>
+
+<template>
+  {#if error}
+    <div>
+      <p style={stylesToString(messageStyles())}>
+        {error?.message || 'An unexpected error occurred. Please try again or refresh the page.'}
+      </p>
+      {#if showErrorDetails && error}
+        <div>
+          <strong>Error:</strong> {error.message}
+          {#if errorInfo?.componentStack}
+            <br />
+            <strong>Component Stack:</strong>
+            <br />
+            {errorInfo.componentStack}
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'ErrorBoundary.dce',
+        target: 'svelte'
+      });
+
+      // Check that all expressions are preserved
+      expect(result.js.code).toContain('{error?.message || "An unexpected error occurred. Please try again or refresh the page."}');
+      expect(result.js.code).toContain('{#if showErrorDetails && error}');
+      expect(result.js.code).toContain('{error.message}');
+      expect(result.js.code).toContain('{#if errorInfo?.componentStack}');
+      expect(result.js.code).toContain('{errorInfo.componentStack}');
+
+      // Check that no empty expressions or conditions are generated
+      expect(result.js.code).not.toContain('{}');
+      expect(result.js.code).not.toContain('{#if }');
     });
   });
 });

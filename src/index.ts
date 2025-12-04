@@ -12,8 +12,15 @@ import { durableReactCompiler } from './generators/react-plugin';
 import { durableSolidCompiler } from './generators/solid-plugin';
 import { durableSvelteCompiler } from './generators/svelte-plugin';
 import { durableVueCompiler } from './generators/vue-plugin';
-import type { CompileOptions, CompileResult } from './types/compiler';
+import { durableComponentFlattener } from './transformer/flattener-plugin';
+import { durableTemplateFlatten } from './transformer/template-flattener-plugin';
+import type { CompileOptions, CompileResult, IncludedComponent } from './types/compiler';
 import { CompilerError } from './types/compiler';
+import type { FlattenResult } from './transformer/component-flattener';
+import { generateReact } from './generators/react';
+import { generateVue } from './generators/vue';
+import { generateSolid } from './generators/solid';
+import { generateSvelte } from './generators/svelte';
 
 /**
  * Main compile function
@@ -72,36 +79,53 @@ export function compile(source: string, options: CompileOptions): CompileResult 
   try {
     // Build the processor pipeline
     const styleMode = options.style || 'scoped';
+    const includeReferencesEnabled = options.includeReferences || false;
+    const flattenEnabled = options.flatten || false;
 
     // Start with parser
     const baseProcessor = durableComponentProcessor()
       .use(durableParser, { filename: options.filename })
       .use(durableTreeStorage); // Store tree in file.data
 
+    // Add template flattener if enabled (must run before styles)
+    const templateFlattenedProcessor = flattenEnabled
+      ? baseProcessor.use(durableTemplateFlatten, { enabled: true, maxDepth: 10, filename: options.filename })
+      : baseProcessor;
+
     // Add style transformer if needed
     const styledProcessor =
       styleMode === 'scoped' || styleMode === 'inline'
-        ? baseProcessor.use(durableScopedStyles, { mode: styleMode })
-        : baseProcessor;
+        ? templateFlattenedProcessor.use(durableScopedStyles, { mode: styleMode })
+        : templateFlattenedProcessor;
+
+    // Add component reference includer if enabled
+    const flattenedProcessor = includeReferencesEnabled
+      ? (styledProcessor as any).use(durableComponentFlattener, {
+          target: options.target,
+          style: styleMode,
+          enabled: true,
+          maxDepth: options.maxReferenceDepth || 50
+        })
+      : styledProcessor;
 
     // Add compiler based on target
     let finalProcessor: any;
 
     switch (options.target) {
       case 'react':
-        finalProcessor = (styledProcessor as any).use(durableReactCompiler);
+        finalProcessor = (flattenedProcessor as any).use(durableReactCompiler);
         break;
 
       case 'vue':
-        finalProcessor = (styledProcessor as any).use(durableVueCompiler);
+        finalProcessor = (flattenedProcessor as any).use(durableVueCompiler);
         break;
 
       case 'solid':
-        finalProcessor = (styledProcessor as any).use(durableSolidCompiler);
+        finalProcessor = (flattenedProcessor as any).use(durableSolidCompiler);
         break;
 
       case 'svelte':
-        finalProcessor = (styledProcessor as any).use(durableSvelteCompiler);
+        finalProcessor = (flattenedProcessor as any).use(durableSvelteCompiler);
         break;
 
       case 'wc':
@@ -125,6 +149,7 @@ export function compile(source: string, options: CompileOptions): CompileResult 
     const file: any = finalProcessor.processSync(source);
     // The tree is stored in file.data by the durableTreeStorage plugin
     const tree: any = (file.data as any).tree;
+    const flattenResult: FlattenResult | undefined = (file.data as any).flatten;
 
     // Defensive: validate tree
     if (!tree || typeof tree !== 'object') {
@@ -171,7 +196,60 @@ export function compile(source: string, options: CompileOptions): CompileResult 
       return p.name;
     });
 
-    return {
+    // Compile included components if enabled
+    let includedComponents: IncludedComponent[] | undefined;
+
+    if (includeReferencesEnabled && flattenResult) {
+      includedComponents = [];
+
+      // Compile each component in dependency order
+      for (const componentPath of flattenResult.dependencyOrder) {
+        const compiled = flattenResult.components.get(componentPath);
+        if (!compiled) continue;
+
+        // Generate code for this component using the appropriate generator
+        let componentCode = '';
+        let componentCSS: string | null = null;
+
+        switch (options.target) {
+          case 'react':
+            componentCode = generateReact(compiled.ir).code;
+            break;
+          case 'vue':
+            componentCode = generateVue(compiled.ir).code;
+            break;
+          case 'solid':
+            componentCode = generateSolid(compiled.ir).code;
+            break;
+          case 'svelte':
+            componentCode = generateSvelte(compiled.ir).code;
+            break;
+          default:
+            continue; // Skip if target not supported
+        }
+
+        // Extract CSS if available
+        if (compiled.ir.styles && compiled.ir.styles.trim()) {
+          // Apply scoped styles if needed
+          if (styleMode === 'scoped') {
+            // For now, just use the raw styles
+            // TODO: Apply scoping logic
+            componentCSS = compiled.ir.styles;
+          } else if (styleMode === 'inline') {
+            componentCSS = compiled.ir.styles;
+          }
+        }
+
+        includedComponents.push({
+          path: componentPath,
+          name: compiled.ir.name,
+          js: { code: componentCode },
+          css: componentCSS ? { code: componentCSS } : null
+        });
+      }
+    }
+
+    const result: CompileResult = {
       js,
       css,
       meta: {
@@ -179,6 +257,12 @@ export function compile(source: string, options: CompileOptions): CompileResult 
         props: propNames
       }
     };
+
+    if (includedComponents) {
+      result.components = includedComponents;
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof CompilerError) {
       throw error;
@@ -201,6 +285,7 @@ export function compile(source: string, options: CompileOptions): CompileResult 
 export type {
   CompileOptions,
   CompileResult,
+  IncludedComponent,
   ParseOptions,
   CompilerTarget,
   StyleMode
@@ -215,6 +300,8 @@ export { durableComponentProcessor } from './processor';
 export { durableParser } from './parser/plugin';
 export { durableTreeStorage } from './transformer/plugin';
 export { durableScopedStyles } from './styles/scoped-plugin';
+export { durableComponentFlattener } from './transformer/flattener-plugin';
+export { durableTemplateFlatten } from './transformer/template-flattener-plugin';
 export { durableReactCompiler } from './generators/react-plugin';
 export { durableSolidCompiler } from './generators/solid-plugin';
 export { durableSvelteCompiler } from './generators/svelte-plugin';

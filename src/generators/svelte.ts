@@ -8,6 +8,7 @@
 import type { DurableComponentIR, TemplateNode } from '../types/ir';
 import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
+import { generateModifierWrapper } from '../utils/event-modifiers';
 
 /**
  * Generate Svelte 5 component from IR
@@ -264,9 +265,16 @@ function generateElement(node: any, depth: number): string {
   // Handle attributes (events, bindings, etc.)
   for (const attr of attributes) {
     if (attr.name.startsWith('on:')) {
-      // Event handler: on:click={handler}
+      // Event handler: Transform on:click to onclick for Svelte 5
+      const eventName = attr.name.slice(3); // Remove 'on:' prefix
       const handler = transformExpression(attr.value);
-      attrs.push(`${attr.name}={${handler}}`);
+
+      // Handle event modifiers (Svelte 5 doesn't have native modifier support)
+      const finalHandler = attr.modifiers && attr.modifiers.length > 0
+        ? generateModifierWrapper(attr.modifiers, handler)
+        : handler;
+
+      attrs.push(`on${eventName}={${finalHandler}}`);
     } else if (attr.name.startsWith('bind:')) {
       // Two-way binding: bind:value={var}
       const varName = transformExpression(attr.value);

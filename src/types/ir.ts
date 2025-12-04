@@ -114,6 +114,7 @@ export interface ElementNode extends BaseTemplateNode, Parent {
 export interface AttributeBinding {
   name: string; // Attribute name (e.g., 'on:click', 'bind:value')
   value: string; // Reference to state/function (e.g., 'functions.increment')
+  modifiers?: string[]; // Event modifiers (e.g., ['preventDefault', 'stopPropagation'])
 }
 
 /**

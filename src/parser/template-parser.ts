@@ -266,18 +266,34 @@ function parseRenderBlock(state: ParserState, start: number): RenderBlockASTNode
 }
 
 /**
- * Read until closing brace, handling nested braces in template literals and objects
+ * Read until closing delimiter, handling nested delimiters in template literals and strings
  */
-function readUntilClosingBrace(state: ParserState): string {
+function readUntilClosingDelimiter(state: ParserState, closeDelimiter: string): string {
   let result = '';
   let depth = 0;
   let inString = false;
   let inTemplateLiteral = false;
   let stringChar = '';
+  let escapeNext = false;
 
   while (state.index < state.input.length) {
     const ch = peek(state);
     const next = peek(state, 1);
+
+    // Handle escape sequences
+    if (escapeNext) {
+      escapeNext = false;
+      result += ch;
+      state.index++;
+      continue;
+    }
+
+    if (ch === '\\' && (inString || inTemplateLiteral)) {
+      escapeNext = true;
+      result += ch;
+      state.index++;
+      continue;
+    }
 
     // Handle template literals
     if (ch === '`' && !inString) {
@@ -300,27 +316,29 @@ function readUntilClosingBrace(state: ParserState): string {
       continue;
     }
 
-    // Handle braces
+    // Handle braces (for nested structures)
     if (!inString && !inTemplateLiteral) {
-      if (ch === '{') {
+      if (ch === '{' && closeDelimiter === '}') {
         depth++;
         result += ch;
         state.index++;
         continue;
       }
-      if (ch === '}') {
+      if (ch === closeDelimiter) {
         if (depth === 0) {
-          // Found the closing brace
+          // Found the closing delimiter
           return result;
         }
-        depth--;
+        if (closeDelimiter === '}') {
+          depth--;
+        }
         result += ch;
         state.index++;
         continue;
       }
     }
 
-    // Handle template literal expressions
+    // Handle template literal expressions ${...}
     if (inTemplateLiteral && ch === '$' && next === '{') {
       result += ch;
       state.index++;
@@ -330,16 +348,31 @@ function readUntilClosingBrace(state: ParserState): string {
       continue;
     }
 
+    // Handle closing braces inside template literals
+    if (inTemplateLiteral && ch === '}' && depth > 0) {
+      depth--;
+      result += ch;
+      state.index++;
+      continue;
+    }
+
     result += ch;
     state.index++;
   }
 
   throw new CompilerError(
-    'Unexpected end of input in @const declaration',
+    `Unexpected end of input while looking for closing '${closeDelimiter}'`,
     { line: 0, column: state.index },
     undefined,
     'UNEXPECTED_EOF'
   );
+}
+
+/**
+ * Read until closing brace, handling nested braces in template literals and objects
+ */
+function readUntilClosingBrace(state: ParserState): string {
+  return readUntilClosingDelimiter(state, '}');
 }
 
 /**
@@ -841,15 +874,25 @@ function parseEachBlock(state: ParserState, start: number): EachBlockASTNode {
   skipWhitespace(state);
 
   // Parse iterator variable
-  const context = readUntil(state, /[},\s]/);
+  const context = readUntil(state, /[},\s(]/);
   let index: string | undefined;
+  let key: any | undefined;
 
   // Check for index (", index")
   skipWhitespace(state);
   if (peek(state) === ',') {
     consume(state, ',');
     skipWhitespace(state);
-    index = readUntil(state, /[}\s]/);
+    index = readUntil(state, /[}\s(]/);
+  }
+
+  // Check for key expression "(expression)"
+  skipWhitespace(state);
+  if (peek(state) === '(') {
+    consume(state, '(');
+    const keyExpr = readUntil(state, ')');
+    consume(state, ')');
+    key = parseExpression(keyExpr.trim());
   }
 
   skipWhitespace(state);
@@ -875,6 +918,7 @@ function parseEachBlock(state: ParserState, start: number): EachBlockASTNode {
     expression,
     context,
     index,
+    key,
     children,
     start,
     end: state.index
@@ -888,7 +932,7 @@ function parseMustacheTag(state: ParserState): MustacheTagASTNode {
   const start = state.index;
   consume(state, '{');
 
-  const expr = readUntil(state, '}');
+  const expr = readUntilClosingBrace(state);
   consume(state, '}');
 
   return {
@@ -999,7 +1043,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
     consume(state, '=');
     skipWhitespace(state);
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {
@@ -1018,7 +1062,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
     consume(state, '=');
     skipWhitespace(state);
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {
@@ -1037,7 +1081,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
     consume(state, '=');
     skipWhitespace(state);
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {
@@ -1068,7 +1112,7 @@ function parseAttribute(state: ParserState): TemplateAttribute | null {
   // Dynamic value {expr}
   if (peek(state) === '{') {
     consume(state, '{');
-    const expr = readUntil(state, '}');
+    const expr = readUntilClosingBrace(state);
     consume(state, '}');
 
     return {

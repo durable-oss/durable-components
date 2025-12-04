@@ -175,11 +175,17 @@ function transformElement(node: ElementASTNode): ElementNode {
 
   for (const attr of node.attributes) {
     if (attr.type === 'EventHandler') {
-      // Event handler: on:click={handler}
+      // Event handler: on:click={handler} or on:click|preventDefault={handler}
+      // Parse modifiers from event name (e.g., "click|preventDefault|stopPropagation")
+      const parts = attr.name.split('|');
+      const eventName = parts[0];
+      const modifiers = parts.slice(1);
+
       const expr = extractExpression(attr.expression);
       attributes.push({
-        name: `on:${attr.name}`,
-        value: `functions.${expr}`
+        name: `on:${eventName}`,
+        value: `functions.${expr}`,
+        modifiers: modifiers.length > 0 ? modifiers : undefined
       });
     } else if (attr.type === 'Binding') {
       // Two-way binding: bind:value={name}
@@ -288,6 +294,7 @@ function transformEachBlock(node: EachBlockASTNode): EachNode {
     expression: prefixExpression(expr),
     itemName: node.context,
     indexName: node.index,
+    key: node.key ? extractExpression(node.key) : undefined,
     children: node.children.map(transformNode)
   };
 }
@@ -362,12 +369,18 @@ function extractExpression(node: any): string {
       return typeof n.name === 'string' ? n.name : '';
     }
 
+    // Handle chain expression (optional chaining)
+    if (n.type === 'ChainExpression') {
+      return extract(n.expression, depth + 1);
+    }
+
     // Handle member expression
     if (n.type === 'MemberExpression') {
       const object = extract(n.object, depth + 1);
+      const optional = n.optional ? '?.' : '.';
       const property = n.computed
         ? `[${extract(n.property, depth + 1)}]`
-        : `.${extract(n.property, depth + 1)}`;
+        : `${optional}${extract(n.property, depth + 1)}`;
       return object + property;
     }
 
@@ -400,10 +413,11 @@ function extractExpression(node: any): string {
     // Handle call expression
     if (n.type === 'CallExpression') {
       const callee = extract(n.callee, depth + 1);
+      const optional = n.optional ? '?.' : '';
       const args = Array.isArray(n.arguments)
         ? n.arguments.map((arg: any) => extract(arg, depth + 1)).join(', ')
         : '';
-      return `${callee}(${args})`;
+      return `${callee}${optional}(${args})`;
     }
 
     // Handle arrow function
