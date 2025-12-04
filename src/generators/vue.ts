@@ -310,6 +310,9 @@ function generateTemplate(node: TemplateNode, ctx: GeneratorContext, depth: numb
     case 'slot':
       return generateSlot(node);
 
+    case 'comment':
+      return `<!-- ${node.content} -->`;
+
     default:
       return '';
   }
@@ -426,7 +429,7 @@ function generateIf(node: any, ctx: GeneratorContext, depth: number): string {
   const condition = transformTemplateExpression(node.condition, ctx);
   const consequent = node.consequent
     .map((child: any) => generateTemplate(child, ctx, depth))
-    .filter(Boolean)
+    .filter((s: string) => s.trim().length > 0)
     .join('\n');
 
   if (!node.alternate) {
@@ -445,7 +448,7 @@ function generateIf(node: any, ctx: GeneratorContext, depth: number): string {
 
   const alternate = node.alternate
     .map((child: any) => generateTemplate(child, ctx, depth))
-    .filter(Boolean)
+    .filter((s: string) => s.trim().length > 0)
     .join('\n');
 
   // Add v-if to consequent and v-else to alternate
@@ -483,7 +486,7 @@ function generateEach(node: any, ctx: GeneratorContext, depth: number): string {
 
   const children = node.children
     .map((child: any) => generateTemplate(child, ctx, depth))
-    .filter(Boolean)
+    .filter((s: string) => s.trim().length > 0)
     .join('\n');
 
   // Build v-for directive

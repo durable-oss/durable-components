@@ -146,7 +146,10 @@ export function compile(source: string, options: CompileOptions): CompileResult 
     }
 
     // Process the source through the unified pipeline
-    const file: any = finalProcessor.processSync(source);
+    // Create a VFile with the filename if provided
+    const file: any = options.filename
+      ? finalProcessor.processSync({ value: source, path: options.filename })
+      : finalProcessor.processSync(source);
     // The tree is stored in file.data by the durableTreeStorage plugin
     const tree: any = (file.data as any).tree;
     const flattenResult: FlattenResult | undefined = (file.data as any).flatten;

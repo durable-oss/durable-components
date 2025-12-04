@@ -15,7 +15,8 @@ import type {
   RenderBlockASTNode,
   ConstTagASTNode,
   HtmlTagASTNode,
-  DebugTagASTNode
+  DebugTagASTNode,
+  CommentASTNode
 } from '../types/ast';
 import type {
   TemplateNode,
@@ -29,6 +30,7 @@ import type {
   ConstNode,
   HtmlNode,
   DebugNode,
+  CommentNode,
   AttributeBinding
 } from '../types/ir';
 
@@ -144,6 +146,8 @@ function transformNode(node: TemplateASTNode): TemplateNode {
         return transformHtmlTag(node);
       case 'DebugTag':
         return transformDebugTag(node);
+      case 'Comment':
+        return transformComment(node);
       default:
         // Defensive: warn about unknown node type
         const unknownType = (node as any).type;
@@ -245,6 +249,27 @@ function transformText(node: TextASTNode): TextNode {
 
   return {
     type: 'text',
+    content: node.data
+  };
+}
+
+/**
+ * Transform comment node
+ */
+function transformComment(node: CommentASTNode): CommentNode {
+  // Defensive: validate input
+  if (!node || typeof node !== 'object') {
+    throw new TypeError('transformComment: node must be an object');
+  }
+  if (node.type !== 'Comment') {
+    throw new Error(`transformComment: expected Comment node, got "${node.type}"`);
+  }
+  if (typeof node.data !== 'string') {
+    throw new TypeError('transformComment: node.data must be a string');
+  }
+
+  return {
+    type: 'comment',
     content: node.data
   };
 }
