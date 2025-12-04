@@ -576,4 +576,109 @@ describe('React Generator', () => {
       expect(result.code).toContain('useMemo');
     });
   });
+
+  describe('Render blocks', () => {
+    it('should generate safe render call without arguments', () => {
+      const ir = createEmptyIR('Test');
+      ir.props = [{ name: 'children' }];
+      ir.template = {
+        type: 'element',
+        name: 'div',
+        children: [
+          {
+            type: 'render',
+            snippet: 'children',
+            args: undefined
+          }
+        ]
+      };
+
+      const result = generateReact(ir);
+
+      expect(result.code).toContain('{children?.()}');
+    });
+
+    it('should generate safe render call with arguments', () => {
+      const ir = createEmptyIR('Test');
+      ir.props = [{ name: 'header' }];
+      ir.template = {
+        type: 'element',
+        name: 'div',
+        children: [
+          {
+            type: 'render',
+            snippet: 'header',
+            args: ['title', '{ size: "large" }']
+          }
+        ]
+      };
+
+      const result = generateReact(ir);
+
+      expect(result.code).toContain('{header?.(title, { size: "large" })}');
+    });
+
+    it('should handle render blocks in nested elements', () => {
+      const ir = createEmptyIR('Card');
+      ir.props = [{ name: 'header' }, { name: 'footer' }];
+      ir.template = {
+        type: 'element',
+        name: 'div',
+        children: [
+          {
+            type: 'element',
+            name: 'header',
+            children: [
+              {
+                type: 'render',
+                snippet: 'header',
+                args: undefined
+              }
+            ]
+          },
+          {
+            type: 'element',
+            name: 'footer',
+            children: [
+              {
+                type: 'render',
+                snippet: 'footer',
+                args: undefined
+              }
+            ]
+          }
+        ]
+      };
+
+      const result = generateReact(ir);
+
+      expect(result.code).toContain('{header?.()}');
+      expect(result.code).toContain('{footer?.()}');
+      expect(result.code).toContain('<header');
+      expect(result.code).toContain('<footer');
+    });
+
+    it('should always generate defensive code even without optional chaining in input', () => {
+      const ir = createEmptyIR('Test');
+      ir.props = [{ name: 'snippet' }];
+      ir.template = {
+        type: 'element',
+        name: 'div',
+        children: [
+          {
+            type: 'render',
+            snippet: 'snippet',
+            args: ['arg1', 'arg2']
+          }
+        ]
+      };
+
+      const result = generateReact(ir);
+
+      // Should always generate defensive code with optional chaining
+      expect(result.code).toContain('{snippet?.(arg1, arg2)}');
+      // Should not crash if snippet is undefined
+      expect(result.code).not.toContain('{snippet(');
+    });
+  });
 });

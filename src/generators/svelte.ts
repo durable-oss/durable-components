@@ -245,6 +245,9 @@ function generateTemplate(node: TemplateNode, depth: number = 0): string {
     case 'slot':
       return generateSlot(node);
 
+    case 'render':
+      return generateRender(node);
+
     case 'comment':
       return `<!-- ${node.content} -->`;
 
@@ -401,6 +404,19 @@ function generateSlot(node: any): string {
   }
 
   return '<slot />';
+}
+
+/**
+ * Generate render block (for {@render snippet()} syntax)
+ * Always generates defensive code that safely handles undefined snippets
+ */
+function generateRender(node: any): string {
+  const snippet = node.snippet;
+  const args = node.args || [];
+  const argsList = args.length > 0 ? args.join(', ') : '';
+
+  // Svelte 5 uses {@render} syntax natively - always use optional chaining
+  return `{@render ${snippet}?.(${argsList})}`;
 }
 
 /**

@@ -251,8 +251,18 @@ function generateJSX(node, ctx, depth = 0) {
             return generateEachJSX(node, ctx, depth);
         case 'slot':
             return '{props.children}';
+        case 'render':
+            return generateRenderJSX(node, ctx);
         case 'comment':
             return `{/* ${node.content} */}`;
+        case 'dce-element':
+            return generateDceElementJSX(node, ctx, depth);
+        case 'dce-window':
+            return generateDceWindowJSX(node, ctx);
+        case 'dce-boundary':
+            return generateDceBoundaryJSX(node, ctx, depth);
+        case 'dce-head':
+            return generateDceHeadJSX(node, ctx, depth);
         default:
             return '';
     }
@@ -391,6 +401,17 @@ function generateEachJSX(node, ctx, depth) {
     return `{${array}.map((${item}, ${index}) => (\n${(0, code_gen_1.indent)(children)}\n))}`;
 }
 /**
+ * Generate render block JSX (for {@render snippet()} syntax)
+ * Always generates defensive code that safely handles undefined snippets
+ */
+function generateRenderJSX(node, ctx) {
+    const snippet = node.snippet;
+    const args = node.args || [];
+    const argsList = args.length > 0 ? args.join(', ') : '';
+    // Always generate defensive code that checks if snippet exists
+    return `{${snippet}?.(${argsList})}`;
+}
+/**
  * Transform IR expression to JavaScript
  */
 function transformExpression(expr, ir) {
@@ -401,6 +422,138 @@ function transformExpression(expr, ir) {
     transformed = transformed.replace(/\bderived\./g, '');
     transformed = transformed.replace(/\bfunctions\./g, '');
     return transformed;
+}
+/**
+ * Generate dce:element JSX (dynamic element tag)
+ */
+function generateDceElementJSX(node, ctx, depth) {
+    const { tagExpression, attributes = [], bindings = {}, children = [] } = node;
+    // Transform the tag expression
+    const Tag = transformExpression(tagExpression, {});
+    // Collect all props (same as regular element)
+    const props = [];
+    // Handle bindings
+    for (const [key, value] of Object.entries(bindings)) {
+        const valueStr = String(value);
+        const transformedValue = transformExpression(valueStr, {});
+        if (key === 'class') {
+            if (transformedValue.startsWith('"') && transformedValue.endsWith('"')) {
+                props.push(`className=${transformedValue}`);
+            }
+            else {
+                props.push(`className={${transformedValue}}`);
+            }
+        }
+        else {
+            if (transformedValue.startsWith('"') && transformedValue.endsWith('"')) {
+                props.push(`${key}=${transformedValue}`);
+            }
+            else {
+                props.push(`${key}={${transformedValue}}`);
+            }
+        }
+    }
+    // Handle attributes
+    for (const attr of attributes) {
+        if (attr.name.startsWith('on:')) {
+            const eventName = 'on' + capitalize(attr.name.slice(3));
+            const handler = attr.value.replace('functions.', '');
+            const finalHandler = attr.modifiers && attr.modifiers.length > 0
+                ? (0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)
+                : handler;
+            props.push(`${eventName}={${finalHandler}}`);
+        }
+        else if (attr.name.startsWith('bind:')) {
+            const propName = attr.name.slice(5);
+            const varName = attr.value.replace('state.', '');
+            const setter = ctx.stateSetters.get(varName);
+            props.push(`${propName}={${varName}}`);
+            if (setter && propName === 'value') {
+                props.push(`onChange={(e) => ${setter}(e.target.value)}`);
+            }
+        }
+        else {
+            const attrName = attr.name === 'class' ? 'className' : attr.name;
+            const attrValue = attr.value.replace(/^(state|props|derived)\./, '');
+            if (attrValue && attrValue !== 'true' && attrValue !== 'false' && !attrValue.match(/^["'].*["']$/)) {
+                props.push(`${attrName}={${attrValue}}`);
+            }
+            else if (attrValue === 'true' || attrValue === 'false') {
+                props.push(`${attrName}={${attrValue}}`);
+            }
+            else {
+                props.push(`${attrName}=${attrValue}`);
+            }
+        }
+    }
+    const propsStr = props.length > 0 ? ' ' + props.join(' ') : '';
+    // Handle children
+    if (children.length === 0) {
+        return `<${Tag}${propsStr} />`;
+    }
+    const childrenJSX = children
+        .map((child) => generateJSX(child, ctx, depth + 1))
+        .filter(Boolean)
+        .join('\n');
+    if (!childrenJSX.trim()) {
+        return `<${Tag}${propsStr} />`;
+    }
+    return `<${Tag}${propsStr}>\n${(0, code_gen_1.indent)(childrenJSX)}\n</${Tag}>`;
+}
+/**
+ * Generate dce:window JSX (window event handlers)
+ */
+function generateDceWindowJSX(node, ctx) {
+    ctx.usedHooks.add('useEffect');
+    const { attributes = [] } = node;
+    const eventHandlers = [];
+    for (const attr of attributes) {
+        if (attr.name.startsWith('on:')) {
+            const eventName = attr.name.slice(3);
+            const handler = attr.value.replace('functions.', '');
+            const finalHandler = attr.modifiers && attr.modifiers.length > 0
+                ? (0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)
+                : handler;
+            eventHandlers.push(`window.addEventListener('${eventName}', ${finalHandler});`);
+        }
+    }
+    // This will generate useEffect code in the component body
+    // For now, return empty string as this needs to be handled in script generation
+    // TODO: Refactor to properly inject window event handlers into useEffect
+    return '';
+}
+/**
+ * Generate dce:boundary JSX (error boundary)
+ */
+function generateDceBoundaryJSX(node, ctx, depth) {
+    // React error boundaries require class components or use-error-boundary library
+    // For now, wrap children in a simple ErrorBoundary component
+    const { children = [], attributes = [] } = node;
+    const childrenJSX = children
+        .map((child) => generateJSX(child, ctx, depth + 1))
+        .filter(Boolean)
+        .join('\n');
+    // Find the onerror handler if specified
+    let onError = 'console.error';
+    for (const attr of attributes) {
+        if (attr.name === 'onerror') {
+            onError = attr.value.replace('functions.', '');
+        }
+    }
+    return `<ErrorBoundary onError={${onError}}>\n${(0, code_gen_1.indent)(childrenJSX)}\n</ErrorBoundary>`;
+}
+/**
+ * Generate dce:head JSX (document head)
+ */
+function generateDceHeadJSX(node, ctx, depth) {
+    // React requires react-helmet or react-helmet-async for head management
+    // Generate using Helmet component
+    const { children = [] } = node;
+    const childrenJSX = children
+        .map((child) => generateJSX(child, ctx, depth + 1))
+        .filter(Boolean)
+        .join('\n');
+    return `<Helmet>\n${(0, code_gen_1.indent)(childrenJSX)}\n</Helmet>`;
 }
 /**
  * Capitalize first letter

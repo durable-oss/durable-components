@@ -354,6 +354,9 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
     case 'slot':
       return '{props.children}';
 
+    case 'render':
+      return generateRenderJSX(node, ctx);
+
     case 'comment':
       return `{/* ${node.content} */}`;
 
@@ -504,6 +507,19 @@ function generateEachJSX(node: any, ctx: GeneratorContext, depth: number): strin
 
   // SolidJS .map() works well for simple cases
   return `{${array}.map((${item}, ${index}) => (\n${indent(children)}\n))}`;
+}
+
+/**
+ * Generate render block JSX (for {@render snippet()} syntax)
+ * Always generates defensive code that safely handles undefined snippets
+ */
+function generateRenderJSX(node: any, ctx: GeneratorContext): string {
+  const snippet = node.snippet;
+  const args = node.args || [];
+  const argsList = args.length > 0 ? args.join(', ') : '';
+
+  // Always generate defensive code with optional chaining
+  return `{${snippet}?.(${argsList})}`;
 }
 
 /**

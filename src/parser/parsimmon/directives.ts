@@ -60,9 +60,9 @@ export const renderBlock: IndexedParser<RenderBlockASTNode> = indexed(
             snippet = callee.name;
           } else if (callee.type === 'MemberExpression') {
             // For member expressions like obj.method(), use the full expression
-            snippet = trimmedExpr.split('(')[0].trim();
+            snippet = trimmedExpr.split('(')[0].trim().replace(/\?\.$/g, '');
           } else {
-            snippet = trimmedExpr.split('(')[0].trim();
+            snippet = trimmedExpr.split('(')[0].trim().replace(/\?\.$/g, '');
           }
           args = actualExpr.arguments || [];
         } else if (actualExpr.type === 'Identifier') {

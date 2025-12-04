@@ -200,8 +200,18 @@ function generateTemplate(node, depth = 0) {
             return generateEach(node, depth);
         case 'slot':
             return generateSlot(node);
+        case 'render':
+            return generateRender(node);
         case 'comment':
             return `<!-- ${node.content} -->`;
+        case 'dce-element':
+            return generateDceElement(node, depth);
+        case 'dce-window':
+            return generateDceWindow(node);
+        case 'dce-boundary':
+            return generateDceBoundary(node, depth);
+        case 'dce-head':
+            return generateDceHead(node, depth);
         default:
             return '';
     }
@@ -326,6 +336,17 @@ function generateSlot(node) {
     return '<slot />';
 }
 /**
+ * Generate render block (for {@render snippet()} syntax)
+ * Always generates defensive code that safely handles undefined snippets
+ */
+function generateRender(node) {
+    const snippet = node.snippet;
+    const args = node.args || [];
+    const argsList = args.length > 0 ? args.join(', ') : '';
+    // Svelte 5 uses {@render} syntax natively - always use optional chaining
+    return `{@render ${snippet}?.(${argsList})}`;
+}
+/**
  * Transform IR expression to Svelte expression
  * Remove IR prefixes (state., props., derived., functions.)
  */
@@ -338,4 +359,130 @@ function transformExpression(expr) {
     transformed = transformed.replace(/\bderived\./g, '');
     transformed = transformed.replace(/\bfunctions\./g, '');
     return transformed;
+}
+/**
+ * Generate dce:element (dynamic element)
+ */
+function generateDceElement(node, depth) {
+    const { tagExpression, attributes = [], bindings = {}, children = [] } = node;
+    // Transform the tag expression
+    const tag = transformExpression(tagExpression);
+    // Collect all attributes
+    const attrs = [];
+    // Svelte 5 uses this attribute for dynamic elements
+    attrs.push(`this={${tag}}`);
+    // Handle bindings
+    for (const [key, value] of Object.entries(bindings)) {
+        let valueStr = transformExpression(String(value));
+        valueStr = valueStr.replace(/\bclass\b/g, 'className');
+        attrs.push(`${key}=${valueStr}`);
+    }
+    // Handle attributes
+    for (const attr of attributes) {
+        if (attr.name.startsWith('on:')) {
+            const eventName = attr.name.slice(3);
+            const handler = transformExpression(attr.value);
+            const finalHandler = attr.modifiers && attr.modifiers.length > 0
+                ? (0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)
+                : handler;
+            attrs.push(`on${eventName}={${finalHandler}}`);
+        }
+        else if (attr.name.startsWith('bind:')) {
+            const varName = transformExpression(attr.value);
+            attrs.push(`${attr.name}={${varName}}`);
+        }
+        else if (attr.name.startsWith('class:')) {
+            const condition = transformExpression(attr.value);
+            attrs.push(`${attr.name}={${condition}}`);
+        }
+        else {
+            attrs.push(`${attr.name}="${attr.value}"`);
+        }
+    }
+    const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+    // Handle children
+    if (children.length === 0) {
+        return `<svelte:element${attrsStr} />`;
+    }
+    const childrenHTML = children
+        .map((child) => generateTemplate(child, depth + 1))
+        .filter(Boolean)
+        .join('\n');
+    if (!childrenHTML.trim()) {
+        return `<svelte:element${attrsStr} />`;
+    }
+    const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+    if (hasMultipleLines) {
+        return `<svelte:element${attrsStr}>\n${(0, code_gen_1.indent)(childrenHTML)}\n</svelte:element>`;
+    }
+    else {
+        return `<svelte:element${attrsStr}>${childrenHTML}</svelte:element>`;
+    }
+}
+/**
+ * Generate dce:window (window event handlers)
+ */
+function generateDceWindow(node) {
+    const { attributes = [] } = node;
+    // Collect all attributes
+    const attrs = [];
+    for (const attr of attributes) {
+        if (attr.name.startsWith('on:')) {
+            const eventName = attr.name.slice(3);
+            const handler = transformExpression(attr.value);
+            const finalHandler = attr.modifiers && attr.modifiers.length > 0
+                ? (0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)
+                : handler;
+            attrs.push(`on${eventName}={${finalHandler}}`);
+        }
+    }
+    const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+    return `<svelte:window${attrsStr} />`;
+}
+/**
+ * Generate dce:boundary (error boundary)
+ */
+function generateDceBoundary(node, depth) {
+    // Svelte doesn't have a built-in error boundary
+    // Users would need to create a wrapper component
+    const { children = [], attributes = [] } = node;
+    const childrenHTML = children
+        .map((child) => generateTemplate(child, depth + 1))
+        .filter(Boolean)
+        .join('\n');
+    // Find the onerror handler if specified
+    let onError = 'console.error';
+    for (const attr of attributes) {
+        if (attr.name === 'onerror') {
+            onError = transformExpression(attr.value);
+        }
+    }
+    const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+    if (hasMultipleLines) {
+        return `<ErrorBoundary onerror={${onError}}>\n${(0, code_gen_1.indent)(childrenHTML)}\n</ErrorBoundary>`;
+    }
+    else {
+        return `<ErrorBoundary onerror={${onError}}>${childrenHTML}</ErrorBoundary>`;
+    }
+}
+/**
+ * Generate dce:head (document head)
+ */
+function generateDceHead(node, depth) {
+    // Svelte has built-in <svelte:head> for document head
+    const { children = [] } = node;
+    const childrenHTML = children
+        .map((child) => generateTemplate(child, depth + 1))
+        .filter(Boolean)
+        .join('\n');
+    if (!childrenHTML.trim()) {
+        return '<svelte:head />';
+    }
+    const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+    if (hasMultipleLines) {
+        return `<svelte:head>\n${(0, code_gen_1.indent)(childrenHTML)}\n</svelte:head>`;
+    }
+    else {
+        return `<svelte:head>${childrenHTML}</svelte:head>`;
+    }
 }

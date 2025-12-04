@@ -10,10 +10,10 @@ import type { ElementNode } from '../../types/ir';
 describe('Template Transformer', () => {
   describe('Basic transformations', () => {
     it('should transform empty nodes to div', () => {
-      const result = transformTemplate([]);
-      expect(result.type).toBe('element');
-      expect((result as ElementNode).name).toBe('div');
-      expect((result as ElementNode).children).toHaveLength(0);
+      const { template } = transformTemplate([]);
+      expect(template.type).toBe('element');
+      expect((template as ElementNode).name).toBe('div');
+      expect((template as ElementNode).children).toHaveLength(0);
     });
 
     it('should transform single element', () => {
@@ -26,9 +26,9 @@ describe('Template Transformer', () => {
         end: 10
       }];
 
-      const result = transformTemplate(nodes);
-      expect(result.type).toBe('element');
-      expect((result as ElementNode).name).toBe('div');
+      const { template } = transformTemplate(nodes);
+      expect(template.type).toBe('element');
+      expect((template as ElementNode).name).toBe('div');
     });
 
     it('should wrap multiple root nodes in div', () => {
@@ -51,10 +51,10 @@ describe('Template Transformer', () => {
         }
       ];
 
-      const result = transformTemplate(nodes) as ElementNode;
-      expect(result.type).toBe('element');
-      expect(result.name).toBe('div');
-      expect(result.children).toHaveLength(2);
+      const { template } = transformTemplate(nodes);
+      expect(template.type).toBe('element');
+      expect((template as ElementNode).name).toBe('div');
+      expect((template as ElementNode).children).toHaveLength(2);
     });
 
     it('should transform text node', () => {
@@ -65,9 +65,9 @@ describe('Template Transformer', () => {
         end: 11
       }];
 
-      const result = transformTemplate(nodes);
-      expect(result.type).toBe('text');
-      expect((result as any).content).toBe('Hello World');
+      const { template } = transformTemplate(nodes);
+      expect(template.type).toBe('text');
+      expect((template as any).content).toBe('Hello World');
     });
 
     it('should transform element with children', () => {
@@ -92,11 +92,107 @@ describe('Template Transformer', () => {
         end: 30
       }];
 
-      const result = transformTemplate(nodes) as ElementNode;
-      expect(result.children).toBeDefined();
-      expect(result.children).toHaveLength(1);
-      expect((result.children![0] as ElementNode).type).toBe('element');
-      expect((result.children![0] as ElementNode).name).toBe('p');
+      const { template } = transformTemplate(nodes);
+      expect((template as ElementNode).children).toBeDefined();
+      expect((template as ElementNode).children).toHaveLength(1);
+      expect(((template as ElementNode).children![0] as ElementNode).type).toBe('element');
+      expect(((template as ElementNode).children![0] as ElementNode).name).toBe('p');
+    });
+  });
+
+  describe('Render blocks', () => {
+    it('should transform render block without arguments', () => {
+      const nodes = [{
+        type: 'RenderBlock' as const,
+        expression: {
+          type: 'Program',
+          body: [{
+            type: 'ExpressionStatement',
+            expression: {
+              type: 'CallExpression',
+              callee: { type: 'Identifier', name: 'children' },
+              arguments: []
+            }
+          }]
+        },
+        snippet: 'children',
+        args: undefined,
+        start: 0,
+        end: 20
+      }];
+
+      const { template } = transformTemplate(nodes);
+      expect(template.type).toBe('render');
+      expect((template as any).snippet).toBe('children');
+      expect((template as any).args).toBeUndefined();
+    });
+
+    it('should transform render block with arguments', () => {
+      const nodes = [{
+        type: 'RenderBlock' as const,
+        expression: {
+          type: 'Program',
+          body: [{
+            type: 'ExpressionStatement',
+            expression: {
+              type: 'CallExpression',
+              callee: { type: 'Identifier', name: 'header' },
+              arguments: [
+                { type: 'Identifier', name: 'title' },
+                { type: 'ObjectExpression', properties: [] }
+              ]
+            }
+          }]
+        },
+        snippet: 'header',
+        args: [
+          { type: 'Identifier', name: 'title' },
+          { type: 'ObjectExpression', properties: [] }
+        ],
+        start: 0,
+        end: 30
+      }];
+
+      const { template } = transformTemplate(nodes);
+      expect(template.type).toBe('render');
+      expect((template as any).snippet).toBe('header');
+      expect((template as any).args).toBeDefined();
+      expect((template as any).args).toHaveLength(2);
+    });
+
+    it('should transform render block inside element', () => {
+      const nodes = [{
+        type: 'Element' as const,
+        name: 'div',
+        attributes: [],
+        children: [{
+          type: 'RenderBlock' as const,
+          expression: {
+            type: 'Program',
+            body: [{
+              type: 'ExpressionStatement',
+              expression: {
+                type: 'CallExpression',
+                callee: { type: 'Identifier', name: 'children' },
+                arguments: []
+              }
+            }]
+          },
+          snippet: 'children',
+          args: undefined,
+          start: 5,
+          end: 25
+        }],
+        start: 0,
+        end: 31
+      }];
+
+      const { template } = transformTemplate(nodes);
+      expect(template.type).toBe('element');
+      expect((template as ElementNode).name).toBe('div');
+      expect((template as ElementNode).children).toHaveLength(1);
+      expect((template as ElementNode).children[0].type).toBe('render');
+      expect(((template as ElementNode).children[0] as any).snippet).toBe('children');
     });
   });
 });
