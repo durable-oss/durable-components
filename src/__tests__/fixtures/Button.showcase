@@ -1,0 +1,45 @@
+<params>
+  <param name="label" type="string" default="Click me" />
+  <param name="disabled" type="boolean" default={false} />
+  <param name="loading" type="boolean" default={false} />
+</params>
+
+<scenario name="Default">
+  <Button disabled={disabled} loading={loading}>{label}</Button>
+</scenario>
+
+<scenario name="Primary">
+  <Button variant="primary" disabled={disabled} loading={loading}>{label}</Button>
+</scenario>
+
+<scenario name="Secondary">
+  <Button variant="secondary">{label}</Button>
+</scenario>
+
+<scenario name="Outline">
+  <Button variant="outline">{label}</Button>
+</scenario>
+
+<scenario name="Ghost">
+  <Button variant="ghost">{label}</Button>
+</scenario>
+
+<scenario name="Destructive">
+  <Button variant="destructive">{label}</Button>
+</scenario>
+
+<scenario name="Small">
+  <Button size="sm">{label}</Button>
+</scenario>
+
+<scenario name="Large">
+  <Button size="lg">{label}</Button>
+</scenario>
+
+<scenario name="Disabled">
+  <Button variant="primary" disabled={true}>{label}</Button>
+</scenario>
+
+<scenario name="Loading">
+  <Button variant="primary" loading={true}>{label}</Button>
+</scenario>

@@ -1,0 +1,36 @@
+<params>
+  <param name="defaultTab" type="number" default={0} />
+</params>
+
+<scenario name="Horizontal">
+  <Tabs
+    defaultTab={defaultTab}
+    tabs={[
+      { label: 'Overview', content: 'This is the overview tab content.' },
+      { label: 'Features', content: 'This is the features tab content.' },
+      { label: 'Pricing', content: 'This is the pricing tab content.' }
+    ]}
+  />
+</scenario>
+
+<scenario name="Vertical">
+  <Tabs
+    orientation="vertical"
+    tabs={[
+      { label: 'Profile', content: 'Manage your profile settings here.' },
+      { label: 'Security', content: 'Update your password and security preferences.' },
+      { label: 'Notifications', content: 'Control your notification preferences.' }
+    ]}
+  />
+</scenario>
+
+<scenario name="Second tab active">
+  <Tabs
+    defaultTab={1}
+    tabs={[
+      { label: 'Tab one', content: 'Content for tab one.' },
+      { label: 'Tab two', content: 'Content for tab two — starts active.' },
+      { label: 'Tab three', content: 'Content for tab three.' }
+    ]}
+  />
+</scenario>

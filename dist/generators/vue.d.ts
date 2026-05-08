@@ -9,4 +9,6 @@ import type { CompiledJS } from '../types/compiler';
 /**
  * Generate Vue 3 component from IR
  */
-export declare function generateVue(ir: DurableComponentIR): CompiledJS;
+export declare function generateVue(ir: DurableComponentIR, options?: {
+    browserSafe?: boolean;
+}): CompiledJS;

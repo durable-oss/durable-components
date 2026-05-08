@@ -1,0 +1,35 @@
+<params>
+  <param name="allowMultiple" type="boolean" default={false} />
+</params>
+
+<scenario name="Default">
+  <Accordion
+    items={[
+      { title: 'What is Durable Components?', content: 'Durable Components is a framework-agnostic component system that compiles to React, Svelte, and Solid.' },
+      { title: 'How do I get started?', content: 'Install the package, write a .dce file, and compile to your target framework.' },
+      { title: 'Which frameworks are supported?', content: 'React, Svelte, and Solid are currently supported as compilation targets.' }
+    ]}
+    allowMultiple={allowMultiple}
+  />
+</scenario>
+
+<scenario name="Allow multiple open">
+  <Accordion
+    allowMultiple={true}
+    items={[
+      { title: 'Section one', content: 'Content for section one.' },
+      { title: 'Section two', content: 'Content for section two.' },
+      { title: 'Section three', content: 'Content for section three.' }
+    ]}
+  />
+</scenario>
+
+<scenario name="Pre-opened item">
+  <Accordion
+    defaultOpen={[0]}
+    items={[
+      { title: 'Open by default', content: 'This section starts open.' },
+      { title: 'Closed by default', content: 'This section starts closed.' }
+    ]}
+  />
+</scenario>

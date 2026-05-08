@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { compile } from '../index';
 import type { CompilerTarget, StyleMode } from '../types/compiler';
+import { startShowcaseServer } from '../showcase/server';
 
 program
   .name('dcc')
@@ -95,7 +96,124 @@ program
     console.log('  - unocss  (UnoCSS integration - Coming soon)');
   });
 
+const showcaseCmd = program
+  .command('showcase')
+  .description('Showcase commands');
+
+showcaseCmd
+  .command('list')
+  .description('List all .showcase files in the current project')
+  .argument('[dir]', 'Directory to search (default: current directory)', '.')
+  .action((dir: string) => {
+    const rootDir = path.resolve(dir);
+    const showcaseFiles = findShowcaseFiles(rootDir);
+
+    if (showcaseFiles.length === 0) {
+      console.log('No .showcase files found.');
+      return;
+    }
+
+    const componentExts = new Set(['.dce', '.jsx', '.tsx', '.vue', '.svelte', '.js', '.ts']);
+    const componentFiles = findComponentFiles(rootDir, componentExts);
+
+    const linked: Array<{ showcase: string; component: string }> = [];
+    const standalone: string[] = [];
+
+    for (const showcase of showcaseFiles) {
+      const baseName = path.basename(showcase, '.showcase');
+      const dir2 = path.dirname(showcase);
+      const match = [...componentExts].find(ext =>
+        componentFiles.has(path.join(dir2, baseName + ext))
+      );
+      if (match) {
+        linked.push({ showcase, component: path.join(dir2, baseName + match) });
+      } else {
+        standalone.push(showcase);
+      }
+    }
+
+    if (linked.length > 0) {
+      console.log('Component Showcases:');
+      for (const { showcase, component } of linked) {
+        const rel = path.relative(rootDir, showcase);
+        const compRel = path.relative(rootDir, component);
+        console.log(`  ${rel}  →  ${compRel}`);
+      }
+    }
+
+    if (standalone.length > 0) {
+      if (linked.length > 0) console.log('');
+      console.log('Demo Files:');
+      for (const f of standalone) {
+        console.log(`  ${path.relative(rootDir, f)}`);
+      }
+    }
+  });
+
+showcaseCmd
+  .command('serve')
+  .description('Start the showcase browser UI with hot reload')
+  .argument('[dir]', 'Root directory to search for .showcase files', '.')
+  .option('-p, --port <number>', 'Port to listen on', '4242')
+  .action((dir: string, options: any) => {
+    const rootDir = path.resolve(dir);
+    const port = parseInt(options.port, 10);
+    startShowcaseServer({ rootDir, port });
+  });
+
 program.parse();
+
+function findShowcaseFiles(rootDir: string): string[] {
+  const results: string[] = [];
+  const ignored = new Set(['node_modules', '.git', 'dist']);
+
+  function walk(dir: string): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (ignored.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile() && entry.name.endsWith('.showcase')) {
+        results.push(full);
+      }
+    }
+  }
+
+  walk(rootDir);
+  return results.sort();
+}
+
+function findComponentFiles(rootDir: string, exts: Set<string>): Set<string> {
+  const results = new Set<string>();
+  const ignored = new Set(['node_modules', '.git', 'dist']);
+
+  function walk(dir: string): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (ignored.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile() && exts.has(path.extname(entry.name))) {
+        results.add(full);
+      }
+    }
+  }
+
+  walk(rootDir);
+  return results;
+}
 
 /**
  * Get file extension for target

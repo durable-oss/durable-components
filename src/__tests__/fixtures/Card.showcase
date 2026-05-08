@@ -1,0 +1,36 @@
+<params>
+  <param name="title" type="string" default="Card Title" />
+  <param name="description" type="string" default="A short description of the card." />
+  <param name="hoverable" type="boolean" default={false} />
+  <param name="clickable" type="boolean" default={false} />
+</params>
+
+<scenario name="Default">
+  <Card title={title} description={description} hoverable={hoverable} clickable={clickable}>
+    Card body content goes here.
+  </Card>
+</scenario>
+
+<scenario name="With footer">
+  <Card title={title} description={description} footer="Last updated: today">
+    Card body content goes here.
+  </Card>
+</scenario>
+
+<scenario name="Hoverable">
+  <Card title="Hoverable card" description="Hover over me." hoverable={true}>
+    Hover to see the shadow effect.
+  </Card>
+</scenario>
+
+<scenario name="Clickable">
+  <Card title="Clickable card" description="Click me." clickable={true}>
+    Click anywhere on this card.
+  </Card>
+</scenario>
+
+<scenario name="Title only">
+  <Card title="Title only card">
+    Content without a description.
+  </Card>
+</scenario>

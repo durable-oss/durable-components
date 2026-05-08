@@ -140,9 +140,11 @@ function generateComponent(ir, ctx) {
     if (ir.functions.length > 0) {
         body.push(generateFunctionDeclarations(ir, ctx));
     }
-    // Generate JSX return
+    // Generate JSX return — wrap in fragment if root is not an element
     const jsx = generateJSX(ir.template, ctx);
-    body.push(`return (\n${(0, code_gen_1.indent)(jsx)}\n);`);
+    const needsFragment = !jsx.trimStart().startsWith('<');
+    const returnJsx = needsFragment ? `<>\n${(0, code_gen_1.indent)(jsx)}\n</>` : jsx;
+    body.push(`return (\n${(0, code_gen_1.indent)(returnJsx)}\n);`);
     const componentBody = body.join('\n\n');
     return `export function ${ir.name}(${propsParam}) {\n${(0, code_gen_1.indent)(componentBody)}\n}`;
 }
@@ -199,11 +201,22 @@ function generateDerivedDeclarations(ir, ctx) {
 /**
  * Generate useEffect declarations
  */
+function applySetterTransforms(body, ir, ctx) {
+    for (const state of ir.state) {
+        const setter = ctx.stateSetters.get(state.name);
+        if (setter) {
+            body = body.replace(new RegExp(`\\b${state.name}\\+\\+`, 'g'), `${setter}(${state.name} + 1)`);
+            body = body.replace(new RegExp(`\\b${state.name}--`, 'g'), `${setter}(${state.name} - 1)`);
+            body = body.replace(new RegExp(`\\b${state.name}\\s*=\\s*([^=].+?);`, 'g'), `${setter}($1);`);
+        }
+    }
+    return body;
+}
 function generateEffectDeclarations(ir, ctx) {
     const declarations = ir.effects.map((effect) => {
-        const expr = transformExpression(effect.expression, ir);
-        const deps = effect.dependencies.map((dep) => dep).join(', ');
-        // Handle block vs expression
+        let expr = transformExpression(effect.expression, ir);
+        expr = applySetterTransforms(expr, ir, ctx);
+        const deps = effect.dependencies.join(', ');
         const effectBody = expr.startsWith('{') ? expr : `{\n${(0, code_gen_1.indent)(expr)}\n}`;
         return `useEffect(() => ${effectBody}, [${deps}]);`;
     });
@@ -215,19 +228,7 @@ function generateEffectDeclarations(ir, ctx) {
 function generateFunctionDeclarations(ir, ctx) {
     const declarations = ir.functions.map((func) => {
         const params = func.params?.join(', ') || '';
-        let body = func.body;
-        // Transform state updates to use setters
-        for (const state of ir.state) {
-            const setter = ctx.stateSetters.get(state.name);
-            if (setter) {
-                // Replace count++ with setCount(count + 1)
-                body = body.replace(new RegExp(`\\b${state.name}\\+\\+`, 'g'), `${setter}(${state.name} + 1)`);
-                body = body.replace(new RegExp(`\\b${state.name}--`, 'g'), `${setter}(${state.name} - 1)`);
-                // Replace count = value with setCount(value)
-                body = body.replace(new RegExp(`\\b${state.name}\\s*=\\s*([^=].+?);`, 'g'), `${setter}($1);`);
-            }
-        }
-        // Handle block vs expression body
+        let body = applySetterTransforms(func.body, ir, ctx);
         const functionBody = body.startsWith('{') ? body : `{\n${(0, code_gen_1.indent)(body)}\n}`;
         return `const ${func.name} = (${params}) => ${functionBody};`;
     });
@@ -292,7 +293,10 @@ function generateElementJSX(node, ctx, depth) {
             // Event handler: on:click -> onClick
             const eventName = 'on' + capitalize(attr.name.slice(3));
             const handler = attr.value.replace('functions.', '');
-            props.push(`${eventName}={${handler}}`);
+            // Wrap call expressions in an arrow function so they aren't invoked on render
+            const isCallExpr = /\w+\(.*\)/.test(handler) && !handler.trimStart().startsWith('(') && !handler.trimStart().startsWith('function');
+            const handlerExpr = isCallExpr ? `() => ${handler}` : handler;
+            props.push(`${eventName}={${handlerExpr}}`);
         }
         else if (attr.name === 'bind:this') {
             // Element reference: bind:this={inputElement} -> ref={inputElement}
@@ -370,15 +374,12 @@ function generateEachJSX(node, ctx, depth) {
     const item = node.itemName;
     const index = node.indexName || 'index';
     const children = node.children
-        .map((child) => {
-        // Replace item references in children
-        let jsx = generateJSX(child, ctx, depth + 1);
-        // This is simplified - would need proper scoping
-        return jsx;
-    })
+        .map((child) => generateJSX(child, ctx, depth + 1))
         .filter(Boolean)
         .join('\n');
-    return `{${array}.map((${item}, ${index}) => (\n${(0, code_gen_1.indent)(children)}\n))}`;
+    // Inject key prop into the first element of the child JSX
+    const keyed = children.replace(/^(<\w[^>]*)( \/>|>)/, `$1 key={${index}}$2`);
+    return `{${array}.map((${item}, ${index}) => (\n${(0, code_gen_1.indent)(keyed)}\n))}`;
 }
 /**
  * Transform IR expression to JavaScript

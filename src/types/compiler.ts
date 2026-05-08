@@ -78,6 +78,13 @@ export interface CompileOptions {
    * @default false
    */
   preserveComments?: boolean;
+
+  /**
+   * Omit import and export declarations from generated code.
+   * Useful when embedding output directly in a browser script tag.
+   * @default false
+   */
+  browserSafe?: boolean;
 }
 
 /**

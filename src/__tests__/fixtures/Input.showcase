@@ -1,0 +1,30 @@
+<params>
+  <param name="label" type="string" default="Label" />
+  <param name="placeholder" type="string" default="Enter text..." />
+  <param name="disabled" type="boolean" default={false} />
+  <param name="required" type="boolean" default={false} />
+</params>
+
+<scenario name="Default">
+  <Input label={label} placeholder={placeholder} disabled={disabled} required={required} />
+</scenario>
+
+<scenario name="With error">
+  <Input label="Email" placeholder="Enter email..." error="Please enter a valid email address." />
+</scenario>
+
+<scenario name="With character limit">
+  <Input label="Bio" placeholder="Tell us about yourself..." maxLength={120} />
+</scenario>
+
+<scenario name="Password">
+  <Input label="Password" type="password" placeholder="Enter password..." required={true} />
+</scenario>
+
+<scenario name="Disabled">
+  <Input label="Read-only field" value="Cannot edit this" disabled={true} />
+</scenario>
+
+<scenario name="Required">
+  <Input label="Required field" placeholder="This field is required" required={true} />
+</scenario>

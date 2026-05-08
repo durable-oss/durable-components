@@ -1,0 +1,24 @@
+<params>
+  <param name="open" type="boolean" default={true} />
+  <param name="title" type="string" default="Dialog title" />
+  <param name="description" type="string" default="This is the dialog description." />
+  <param name="showClose" type="boolean" default={true} />
+</params>
+
+<scenario name="Default">
+  <Dialog open={open} title={title} description={description} showClose={showClose}>
+    Dialog body content goes here.
+  </Dialog>
+</scenario>
+
+<scenario name="Confirmation">
+  <Dialog open={true} title="Delete item" description="This action cannot be undone." showClose={true}>
+    Are you sure you want to delete this item?
+  </Dialog>
+</scenario>
+
+<scenario name="No close button">
+  <Dialog open={true} title="Required action" description="You must complete this step." showClose={false}>
+    Please confirm your email address to continue.
+  </Dialog>
+</scenario>

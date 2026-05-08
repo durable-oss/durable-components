@@ -11,13 +11,16 @@ const code_gen_1 = require("../utils/code-gen");
 /**
  * Generate Vue 3 component from IR
  */
-function generateVue(ir) {
+function generateVue(ir, options = {}) {
     const ctx = {
         usedComposables: new Set(),
         stateRefs: new Set(),
         computedNames: new Set(),
         componentName: ir.name
     };
+    if (options.browserSafe) {
+        return generateVueBrowser(ir, ctx);
+    }
     // Generate script setup content
     const scriptContent = generateScriptSetup(ir, ctx);
     // Generate template (HTML)
@@ -38,9 +41,56 @@ function generateVue(ir) {
         parts.push(`<template>\n${(0, code_gen_1.indent)(templateContent)}\n</template>`);
     }
     const code = parts.join('\n\n');
-    return {
-        code
-    };
+    return { code };
+}
+/**
+ * Generate a browser-compatible Vue 3 options API component with inline template.
+ * Uses Vue's runtime compiler (included in vue.global.js) to compile the template.
+ */
+function generateVueBrowser(ir, ctx) {
+    const templateContent = generateTemplate(ir.template, ctx);
+    // Generate setup body without props declaration (props come from setup parameter)
+    const statements = [];
+    if (ir.state.length > 0) {
+        ctx.usedComposables.add('ref');
+        statements.push(generateStateDeclarations(ir, ctx));
+    }
+    if (ir.derived.length > 0) {
+        ctx.usedComposables.add('computed');
+        statements.push(generateDerivedDeclarations(ir, ctx));
+    }
+    if (ir.effects.length > 0) {
+        ctx.usedComposables.add('watchEffect');
+        statements.push(generateEffectDeclarations(ir, ctx));
+    }
+    if (ir.functions.length > 0) {
+        statements.push(generateFunctionDeclarations(ir, ctx));
+    }
+    const returnNames = [
+        ...Array.from(ctx.stateRefs),
+        ...Array.from(ctx.computedNames),
+        ...ir.functions.map(f => f.name),
+    ];
+    const setupBody = [
+        ...statements,
+        returnNames.length > 0 ? `return { ${returnNames.join(', ')} };` : '',
+    ].filter(Boolean).join('\n\n');
+    const composables = Array.from(ctx.usedComposables).sort();
+    const propsDefinition = ir.props.length > 0
+        ? ir.props.map(p => `${p.name}: { default: ${p.defaultValue ?? 'undefined'} }`).join(', ')
+        : '';
+    const templateStr = templateContent.replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+    const code = [
+        composables.length > 0 ? `import { ${composables.join(', ')} } from 'vue';` : '',
+        `export default {`,
+        propsDefinition ? `  props: { ${propsDefinition} },` : '',
+        `  setup(props) {`,
+        (0, code_gen_1.indent)((0, code_gen_1.indent)(setupBody)),
+        `  },`,
+        `  template: \`${templateStr}\`,`,
+        `};`,
+    ].filter(Boolean).join('\n');
+    return { code };
 }
 /**
  * Generate Vue imports based on used composables

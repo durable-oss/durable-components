@@ -1,0 +1,29 @@
+<params>
+  <param name="title" type="string" default="Alert title" />
+  <param name="message" type="string" default="This is the alert message." />
+  <param name="dismissible" type="boolean" default={false} />
+</params>
+
+<scenario name="Info">
+  <Alert variant="info" title={title} message={message} dismissible={dismissible} />
+</scenario>
+
+<scenario name="Success">
+  <Alert variant="success" title={title} message={message} dismissible={dismissible} />
+</scenario>
+
+<scenario name="Warning">
+  <Alert variant="warning" title={title} message={message} dismissible={dismissible} />
+</scenario>
+
+<scenario name="Error">
+  <Alert variant="error" title={title} message={message} dismissible={dismissible} />
+</scenario>
+
+<scenario name="Dismissible">
+  <Alert variant="info" title="Dismissible alert" message="You can close this alert." dismissible={true} />
+</scenario>
+
+<scenario name="No icon">
+  <Alert variant="success" title="No icon" message="This alert has no icon." icon={false} />
+</scenario>

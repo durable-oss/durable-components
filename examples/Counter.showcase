@@ -1,0 +1,15 @@
+<params>
+  <param name="initialCount" type="number" default={0} />
+</params>
+
+<scenario name="Default">
+  <Counter initialCount={initialCount} />
+</scenario>
+
+<scenario name="Starting at 10">
+  <Counter initialCount={10} />
+</scenario>
+
+<scenario name="High count">
+  <Counter initialCount={initialCount} />
+</scenario>

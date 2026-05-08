@@ -32,56 +32,77 @@
 
 <style>
   .counter {
-    padding: 2rem;
-    border-radius: 8px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    max-width: 400px;
-    margin: 2rem auto;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    font-family: system-ui, sans-serif;
+    color: red;
+    max-width: 360px;
+    margin: 3rem auto;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
   }
 
   h2 {
-    margin: 0 0 1rem 0;
-    text-align: center;
+    margin: 0;
+    padding: 1.5rem 2rem;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #6b7280;
+    background: #f9fafb;
+    border-bottom: 1px solid #f0f0f0;
   }
 
   .display {
-    background: rgba(255, 255, 255, 0.1);
-    padding: 1rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
+    padding: 2.5rem 2rem;
+    text-align: center;
   }
 
   .display p {
-    margin: 0.5rem 0;
-    font-size: 1.2rem;
+    margin: 0 0 0.5rem 0;
+    color: #374151;
+  }
+
+  .display p:first-child {
+    font-size: 4rem;
+    font-weight: 700;
+    line-height: 1;
+    color: #111827;
+    letter-spacing: -2px;
+  }
+
+  .display p:last-child {
+    font-size: 1rem;
+    color: #9ca3af;
   }
 
   .buttons {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-top: 1px solid #f0f0f0;
   }
 
   button {
-    padding: 0.75rem 2rem;
-    background: white;
-    color: #667eea;
+    padding: 1.25rem;
+    background: #fff;
+    color: #374151;
     border: none;
-    border-radius: 4px;
-    font-size: 1.5rem;
-    font-weight: bold;
+    font-size: 1.75rem;
+    font-weight: 300;
     cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: background 0.15s;
+  }
+
+  button:first-child {
+    border-right: 1px solid #f0f0f0;
   }
 
   button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    background: #f9fafb;
   }
 
   button:active {
-    transform: translateY(0);
+    background: #f3f4f6;
   }
 </style>
