@@ -371,8 +371,23 @@ function generateTemplate(node: TemplateNode, ctx: GeneratorContext, depth: numb
     case 'slot':
       return generateSlot(node);
 
+    case 'render':
+      return generateRender(node);
+
     case 'comment':
       return `<!-- ${node.content} -->`;
+
+    case 'dce-element':
+      return generateDceElement(node, ctx, depth);
+
+    case 'dce-window':
+      return generateDceWindow(node, ctx);
+
+    case 'dce-boundary':
+      return generateDceBoundary(node, ctx, depth);
+
+    case 'dce-head':
+      return generateDceHead(node, ctx, depth);
 
     default:
       return '';
@@ -417,7 +432,21 @@ function generateElement(node: any, ctx: GeneratorContext, depth: number): strin
       // Event handler: on:click -> @click
       const eventName = attr.name.slice(3);
       const handler = transformTemplateExpression(attr.value, ctx);
-      attrs.push(`@${eventName}="${handler}"`);
+
+      // Vue has native modifier support: @click.prevent.stop
+      // Map canonical modifier names to Vue's syntax
+      const vueModifiers = attr.modifiers && attr.modifiers.length > 0
+        ? '.' + attr.modifiers.map((mod: string) => {
+            switch (mod) {
+              case 'preventDefault': return 'prevent';
+              case 'stopPropagation': return 'stop';
+              case 'stopImmediatePropagation': return 'stop'; // Vue doesn't have stopImmediate, use stop
+              default: return mod; // Pass through self, once, capture, passive, trusted
+            }
+          }).join('.')
+        : '';
+
+      attrs.push(`@${eventName}${vueModifiers}="${handler}"`);
     } else if (attr.name.startsWith('bind:')) {
       // Two-way binding: bind:value -> v-model
       const propName = attr.name.slice(5);
@@ -482,13 +511,13 @@ function generateIf(node: any, ctx: GeneratorContext, depth: number): string {
   if (!node.alternate) {
     // Find the first element to attach v-if to
     const lines = consequent.split('\n');
-    // Find the first line that starts with a tag
-    const firstTagLineIdx = lines.findIndex((line: string) => line.trim().startsWith('<'));
-    if (firstTagLineIdx >= 0) {
-      // Insert v-if into the first tag
-      const firstLine = lines[firstTagLineIdx].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-      const result = [...lines.slice(0, firstTagLineIdx), firstLine, ...lines.slice(firstTagLineIdx + 1)];
-      return result.join('\n');
+    const firstNonEmptyLine = lines.findIndex((line: string) => line.trim().length > 0);
+
+    if (firstNonEmptyLine >= 0 && lines[firstNonEmptyLine].trim().startsWith('<')) {
+      // Insert v-if into the first tag (after opening <tag)
+      const firstLine = lines[firstNonEmptyLine].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,`$1 v-if="${condition}"$2`);
+      const result = [...lines.slice(0, firstNonEmptyLine), firstLine, ...lines.slice(firstNonEmptyLine + 1)].join('\n');
+      return result;
     }
     return consequent;
   }
@@ -502,17 +531,21 @@ function generateIf(node: any, ctx: GeneratorContext, depth: number): string {
   const consequentLines = consequent.split('\n');
   const alternateLines = alternate.split('\n');
 
-  const firstConsequentLineIdx = consequentLines.findIndex((line: string) => line.trim().startsWith('<'));
-  const firstAlternateLineIdx = alternateLines.findIndex((line: string) => line.trim().startsWith('<'));
+  const firstConsequentIdx = consequentLines.findIndex((line: string) => line.trim().startsWith('<'));
+  const firstAlternateIdx = alternateLines.findIndex((line: string) => line.trim().startsWith('<'));
 
-  if (firstConsequentLineIdx >= 0) {
-    const firstLine = consequentLines[firstConsequentLineIdx].replace(/^(\s*<\w+)/, `$1 v-if="${condition}"`);
-    consequentLines[firstConsequentLineIdx] = firstLine;
+  if (firstConsequentIdx >= 0) {
+    consequentLines[firstConsequentIdx] = consequentLines[firstConsequentIdx].replace(
+      /^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,
+      `$1 v-if="${condition}"$2`
+    );
   }
 
-  if (firstAlternateLineIdx >= 0) {
-    const firstLine = alternateLines[firstAlternateLineIdx].replace(/^(\s*<\w+)/, `$1 v-else`);
-    alternateLines[firstAlternateLineIdx] = firstLine;
+  if (firstAlternateIdx >= 0) {
+    alternateLines[firstAlternateIdx] = alternateLines[firstAlternateIdx].replace(
+      /^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,
+      `$1 v-else$2`
+    );
   }
 
   return `${consequentLines.join('\n')}\n${alternateLines.join('\n')}`;
@@ -546,11 +579,14 @@ function generateEach(node: any, ctx: GeneratorContext, depth: number): string {
 
   // Insert v-for into the first child element
   const childLines = children.split('\n');
-  const firstTagLineIdx = childLines.findIndex((line: string) => line.trim().startsWith('<'));
-  if (firstTagLineIdx >= 0) {
-    const firstLine = childLines[firstTagLineIdx].replace(/^(\s*<\w+)/, `$1 ${vFor}${keyAttr}`);
-    const result = [...childLines.slice(0, firstTagLineIdx), firstLine, ...childLines.slice(firstTagLineIdx + 1)];
-    return result.join('\n');
+  const firstNonEmptyLine = childLines.findIndex((line: string) => line.trim().length > 0);
+
+  if (firstNonEmptyLine >= 0 && childLines[firstNonEmptyLine].trim().startsWith('<')) {
+    const firstLine = childLines[firstNonEmptyLine].replace(
+      /^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/,
+      `$1 ${vFor}${keyAttr}$2`
+    );
+    return [...childLines.slice(0, firstNonEmptyLine), firstLine, ...childLines.slice(firstNonEmptyLine + 1)].join('\n');
   }
 
   return children;
@@ -573,6 +609,19 @@ function generateSlot(node: any): string {
   }
 
   return '<slot />';
+}
+
+/**
+ * Generate render block (for {@render snippet()} syntax)
+ * Always generates defensive code that safely handles undefined snippets
+ */
+function generateRender(node: any): string {
+  const snippet = node.snippet;
+  const args = node.args || [];
+  const argsList = args.length > 0 ? args.join(', ') : '';
+
+  // Always generate defensive code with optional chaining
+  return `{{ ${snippet}?.(${argsList}) }}`;
 }
 
 /**
@@ -627,4 +676,145 @@ function transformTemplateExpression(expr: string, ctx: GeneratorContext): strin
   // In Vue templates, refs are automatically unwrapped, so no need to add .value
 
   return transformed;
+}
+
+/**
+ * Generate dce:element (dynamic component)
+ */
+function generateDceElement(node: any, ctx: GeneratorContext, depth: number): string {
+  const { tagExpression, attributes = [], bindings = {}, children = [] } = node;
+
+  // Transform the tag expression
+  const componentIs = transformTemplateExpression(tagExpression, ctx);
+
+  // Collect all attributes
+  const attrs: string[] = [];
+
+  // Vue uses :is directive for dynamic components
+  attrs.push(`:is="${componentIs}"`);
+
+  // Handle bindings
+  for (const [key, value] of Object.entries(bindings)) {
+    const valueStr = String(value);
+    const isStaticString = (valueStr.startsWith('"') && valueStr.endsWith('"')) ||
+                           (valueStr.startsWith("'") && valueStr.endsWith("'"));
+
+    if (isStaticString) {
+      const staticValue = valueStr.slice(1, -1);
+      attrs.push(`${key}="${staticValue}"`);
+    } else {
+      const transformedValue = transformTemplateExpression(valueStr, ctx);
+      attrs.push(`:${key}="${transformedValue}"`);
+    }
+  }
+
+  // Handle attributes
+  for (const attr of attributes) {
+    if (attr.name.startsWith('on:')) {
+      const eventName = attr.name.slice(3);
+      const handler = transformTemplateExpression(attr.value, ctx);
+      const vueModifiers = attr.modifiers && attr.modifiers.length > 0
+        ? '.' + attr.modifiers.map((mod: string) => {
+            switch (mod) {
+              case 'preventDefault': return 'prevent';
+              case 'stopPropagation': return 'stop';
+              case 'stopImmediatePropagation': return 'stop';
+              default: return mod;
+            }
+          }).join('.')
+        : '';
+      attrs.push(`@${eventName}${vueModifiers}="${handler}"`);
+    } else if (attr.name.startsWith('bind:')) {
+      const propName = attr.name.slice(5);
+      const varName = attr.value.replace('state.', '');
+      if (propName === 'value' || propName === 'checked') {
+        attrs.push(`v-model="${varName}"`);
+      } else {
+        attrs.push(`v-model:${propName}="${varName}"`);
+      }
+    } else if (attr.name.startsWith('class:')) {
+      const className = attr.name.slice(6);
+      const condition = transformTemplateExpression(attr.value, ctx);
+      attrs.push(`:class="{ '${className}': ${condition} }"`);
+    } else {
+      attrs.push(`${attr.name}="${attr.value}"`);
+    }
+  }
+
+  const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+
+  // Handle children
+  if (children.length === 0) {
+    return `<component${attrsStr} />`;
+  }
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  if (!childrenHTML.trim()) {
+    return `<component${attrsStr} />`;
+  }
+
+  const hasMultipleLines = childrenHTML.includes('\n') || children.length > 1;
+
+  if (hasMultipleLines) {
+    return `<component${attrsStr}>\n${indent(childrenHTML)}\n</component>`;
+  } else {
+    return `<component${attrsStr}>${childrenHTML}</component>`;
+  }
+}
+
+/**
+ * Generate dce:window (window event handlers)
+ */
+function generateDceWindow(node: any, ctx: GeneratorContext): string {
+  // Vue doesn't have a built-in window directive
+  // We need to use onMounted/onUnmounted in the script
+  // For now, return empty string as this needs script-level handling
+  // TODO: Refactor to properly inject window event handlers
+  return '';
+}
+
+/**
+ * Generate dce:boundary (error boundary)
+ */
+function generateDceBoundary(node: any, ctx: GeneratorContext, depth: number): string {
+  // Vue 3 has onErrorCaptured hook for error boundaries
+  // Wrap children in a component with error handling
+  const { children = [], attributes = [] } = node;
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  // Find the onerror handler if specified
+  let onError = 'console.error';
+  for (const attr of attributes) {
+    if (attr.name === 'onerror') {
+      onError = transformTemplateExpression(attr.value, ctx);
+    }
+  }
+
+  // Vue doesn't have a built-in ErrorBoundary component
+  // Users would need to create a wrapper component
+  return `<ErrorBoundary :on-error="${onError}">\n${indent(childrenHTML)}\n</ErrorBoundary>`;
+}
+
+/**
+ * Generate dce:head (document head)
+ */
+function generateDceHead(node: any, ctx: GeneratorContext, depth: number): string {
+  // Vue uses @vueuse/head or similar libraries for head management
+  // Generate using Teleport to head
+  const { children = [] } = node;
+
+  const childrenHTML = children
+    .map((child: any) => generateTemplate(child, ctx, depth + 1))
+    .filter(Boolean)
+    .join('\n');
+
+  return `<Teleport to="head">\n${indent(childrenHTML)}\n</Teleport>`;
 }

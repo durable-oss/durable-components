@@ -12,6 +12,7 @@ import type {
   IfBlockASTNode,
   EachBlockASTNode,
   KeyBlockASTNode,
+  SnippetBlockASTNode,
   RenderBlockASTNode,
   ConstTagASTNode,
   HtmlTagASTNode,
@@ -31,13 +32,24 @@ import type {
   HtmlNode,
   DebugNode,
   CommentNode,
-  AttributeBinding
+  AttributeBinding,
+  SnippetDefinition
 } from '../types/ir';
+import { getDcePlugin } from './dce-elements';
+
+/**
+ * Context for collecting snippets during transformation
+ */
+export interface TransformContext {
+  snippets: SnippetDefinition[];
+  transformNode: (node: TemplateASTNode, context: TransformContext) => TemplateNode;
+}
 
 /**
  * Transform template AST nodes to IR template nodes
+ * Returns both the template and any snippets found
  */
-export function transformTemplate(nodes: TemplateASTNode[]): TemplateNode {
+export function transformTemplate(nodes: TemplateASTNode[]): { template: TemplateNode; snippets: SnippetDefinition[] } {
   // Defensive: validate input
   if (!Array.isArray(nodes)) {
     throw new TypeError('transformTemplate: nodes must be an array');
@@ -49,31 +61,53 @@ export function transformTemplate(nodes: TemplateASTNode[]): TemplateNode {
     throw new Error(`transformTemplate: too many nodes (${nodes.length} > ${MAX_NODES})`);
   }
 
+  const context: TransformContext = { snippets: [], transformNode };
+
+  // Separate snippet definitions from regular template nodes
+  const templateNodes = nodes.filter(node => node.type !== 'SnippetBlock');
+  const snippetNodes = nodes.filter(node => node.type === 'SnippetBlock') as SnippetBlockASTNode[];
+
+  // Process snippets
+  for (const snippetNode of snippetNodes) {
+    const snippet: SnippetDefinition = {
+      name: snippetNode.name,
+      params: snippetNode.params,
+      template: snippetNode.children.map(child => transformNode(child, context))
+    };
+    context.snippets.push(snippet);
+  }
+
   // If multiple root nodes, wrap in a fragment (div)
-  if (nodes.length === 0) {
+  if (templateNodes.length === 0) {
     return {
-      type: 'element',
-      name: 'div',
-      children: []
+      template: {
+        type: 'element',
+        name: 'div',
+        children: []
+      },
+      snippets: context.snippets
     };
   }
 
-  if (nodes.length === 1) {
+  if (templateNodes.length === 1) {
     // Defensive: validate single node
-    if (!nodes[0] || typeof nodes[0] !== 'object') {
+    if (!templateNodes[0] || typeof templateNodes[0] !== 'object') {
       throw new Error('transformTemplate: invalid node at index 0');
     }
-    if (!nodes[0].type) {
+    if (!templateNodes[0].type) {
       throw new Error('transformTemplate: node at index 0 missing type');
     }
 
-    return transformNode(nodes[0]);
+    return {
+      template: transformNode(templateNodes[0], context),
+      snippets: context.snippets
+    };
   }
 
   // Multiple roots - wrap in fragment
   // Defensive: validate each node before transforming
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
+  for (let i = 0; i < templateNodes.length; i++) {
+    const node = templateNodes[i];
     if (!node || typeof node !== 'object') {
       throw new Error(`transformTemplate: invalid node at index ${i}`);
     }
@@ -83,23 +117,26 @@ export function transformTemplate(nodes: TemplateASTNode[]): TemplateNode {
   }
 
   return {
-    type: 'element',
-    name: 'div',
-    children: nodes.map((node, index) => {
-      try {
-        return transformNode(node);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new Error(`transformTemplate: error transforming node at index ${index}: ${errorMessage}`);
-      }
-    })
+    template: {
+      type: 'element',
+      name: 'div',
+      children: templateNodes.map((node, index) => {
+        try {
+          return transformNode(node, context);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(`transformTemplate: error transforming node at index ${index}: ${errorMessage}`);
+        }
+      })
+    },
+    snippets: context.snippets
   };
 }
 
 /**
  * Transform a single template node
  */
-function transformNode(node: TemplateASTNode): TemplateNode {
+function transformNode(node: TemplateASTNode, context: TransformContext): TemplateNode {
   // Defensive: validate input
   if (!node || typeof node !== 'object') {
     throw new TypeError('transformNode: node must be an object');
@@ -111,24 +148,24 @@ function transformNode(node: TemplateASTNode): TemplateNode {
   try {
     switch (node.type) {
       case 'Element':
-        return transformElement(node);
+        return transformElement(node, context);
       case 'Text':
         return transformText(node);
       case 'MustacheTag':
         return transformMustacheTag(node);
       case 'IfBlock':
-        return transformIfBlock(node);
+        return transformIfBlock(node, context);
       case 'EachBlock':
-        return transformEachBlock(node);
+        return transformEachBlock(node, context);
       case 'KeyBlock':
-        return transformKeyBlock(node);
+        return transformKeyBlock(node, context);
       case 'Slot': {
         // Defensive: validate Slot node
         if (typeof node.name !== 'string') {
           throw new Error('transformNode: Slot node missing valid name');
         }
         const fallback = node.children && Array.isArray(node.children)
-          ? node.children.map(transformNode)
+          ? node.children.map(child => transformNode(child, context))
           : [];
         return {
           type: 'slot',
@@ -136,6 +173,21 @@ function transformNode(node: TemplateASTNode): TemplateNode {
           fallback,
           // For unist compatibility, use children field
           children: fallback
+        };
+      }
+      case 'SnippetBlock': {
+        // Nested snippets should be collected in context
+        const snippetNode = node as SnippetBlockASTNode;
+        const snippet: SnippetDefinition = {
+          name: snippetNode.name,
+          params: snippetNode.params,
+          template: snippetNode.children.map(child => transformNode(child, context))
+        };
+        context.snippets.push(snippet);
+        // Return empty text node as placeholder
+        return {
+          type: 'text',
+          content: ''
         };
       }
       case 'RenderBlock':
@@ -146,6 +198,15 @@ function transformNode(node: TemplateASTNode): TemplateNode {
         return transformHtmlTag(node);
       case 'DebugTag':
         return transformDebugTag(node);
+      case 'DceElement': {
+        // Handle dce: elements through plugin system
+        const dceNode = node as any; // DceElementASTNode
+        const plugin = getDcePlugin(dceNode.kind);
+        if (!plugin) {
+          throw new Error(`No plugin found for dce:${dceNode.kind}`);
+        }
+        return plugin.transform(dceNode, context);
+      }
       case 'Comment':
         return transformComment(node);
       default:
@@ -166,11 +227,11 @@ function transformNode(node: TemplateASTNode): TemplateNode {
 /**
  * Transform element node
  */
-function transformElement(node: ElementASTNode): ElementNode {
+function transformElement(node: ElementASTNode, context: TransformContext): ElementNode {
   const element: ElementNode = {
     type: 'element',
     name: node.name,
-    children: node.children.map(transformNode)
+    children: node.children.map(child => transformNode(child, context))
   };
 
   // Transform attributes
@@ -179,11 +240,16 @@ function transformElement(node: ElementASTNode): ElementNode {
 
   for (const attr of node.attributes) {
     if (attr.type === 'EventHandler') {
-      // Event handler: on:click={handler}
+      // Event handler: on:click={handler} or on:click|preventDefault={handler}
+      // Modifiers are now parsed by the parser
+      const eventName = attr.name;
+      const modifiers = attr.modifiers;
+
       const expr = extractExpression(attr.expression);
       attributes.push({
-        name: `on:${attr.name}`,
-        value: `functions.${expr}`
+        name: `on:${eventName}`,
+        value: `functions.${expr}`,
+        modifiers: modifiers && modifiers.length > 0 ? modifiers : undefined
       });
     } else if (attr.type === 'Binding') {
       // Two-way binding: bind:value={name}
@@ -284,11 +350,11 @@ function transformMustacheTag(node: MustacheTagASTNode): ExpressionNode {
 /**
  * Transform if block
  */
-function transformIfBlock(node: IfBlockASTNode): IfNode {
+function transformIfBlock(node: IfBlockASTNode, context: TransformContext): IfNode {
   const condition = extractExpression(node.expression);
 
-  const consequent = node.children.map(transformNode);
-  const alternate = node.else ? node.else.children.map(transformNode) : undefined;
+  const consequent = node.children.map(child => transformNode(child, context));
+  const alternate = node.else ? node.else.children.map(child => transformNode(child, context)) : undefined;
 
   const ifNode: IfNode = {
     type: 'if',
@@ -305,7 +371,7 @@ function transformIfBlock(node: IfBlockASTNode): IfNode {
 /**
  * Transform each block
  */
-function transformEachBlock(node: EachBlockASTNode): EachNode {
+function transformEachBlock(node: EachBlockASTNode, context: TransformContext): EachNode {
   const expr = extractExpression(node.expression);
 
   return {
@@ -313,7 +379,8 @@ function transformEachBlock(node: EachBlockASTNode): EachNode {
     expression: prefixExpression(expr),
     itemName: node.context,
     indexName: node.index,
-    children: node.children.map(transformNode)
+    key: node.key ? extractExpression(node.key) : undefined,
+    children: node.children.map(child => transformNode(child, context))
   };
 }
 
@@ -347,7 +414,7 @@ function transformRenderBlock(node: RenderBlockASTNode): RenderNode {
 /**
  * Extract expression string from AST node
  */
-function extractExpression(node: any): string {
+export function extractExpression(node: any): string {
   if (!node) return '';
   if (typeof node !== 'object') return '';
 
@@ -387,12 +454,18 @@ function extractExpression(node: any): string {
       return typeof n.name === 'string' ? n.name : '';
     }
 
+    // Handle chain expression (optional chaining)
+    if (n.type === 'ChainExpression') {
+      return extract(n.expression, depth + 1);
+    }
+
     // Handle member expression
     if (n.type === 'MemberExpression') {
       const object = extract(n.object, depth + 1);
+      const optional = n.optional ? '?.' : '.';
       const property = n.computed
         ? `[${extract(n.property, depth + 1)}]`
-        : `.${extract(n.property, depth + 1)}`;
+        : `${optional}${extract(n.property, depth + 1)}`;
       return object + property;
     }
 
@@ -425,10 +498,11 @@ function extractExpression(node: any): string {
     // Handle call expression
     if (n.type === 'CallExpression') {
       const callee = extract(n.callee, depth + 1);
+      const optional = n.optional ? '?.' : '';
       const args = Array.isArray(n.arguments)
         ? n.arguments.map((arg: any) => extract(arg, depth + 1)).join(', ')
         : '';
-      return `${callee}(${args})`;
+      return `${callee}${optional}(${args})`;
     }
 
     // Handle arrow function
@@ -588,8 +662,8 @@ function transformDebugTag(node: DebugTagASTNode): DebugNode {
 /**
  * Transform {#key} block
  */
-function transformKeyBlock(node: KeyBlockASTNode): KeyNode {
-  const children = node.children.map(transformNode);
+function transformKeyBlock(node: KeyBlockASTNode, context: TransformContext): KeyNode {
+  const children = node.children.map(child => transformNode(child, context));
 
   return {
     type: 'key',

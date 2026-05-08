@@ -717,5 +717,49 @@ describe('Durable Component Compiler', () => {
 
       expect(result.js.code).toBeDefined();
     });
+
+    it('should handle render blocks for React', () => {
+      const source = `
+<script>
+  let { children } = $props();
+</script>
+
+<template>
+  <div>
+    {@render children()}
+  </div>
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'RenderTest.dce',
+        target: 'react'
+      });
+
+      expect(result.js.code).toContain('{children?.()}');
+    });
+
+    it('should handle render blocks with arguments for React', () => {
+      const source = `
+<script>
+  let { header } = $props();
+</script>
+
+<template>
+  <div>
+    {@render header("Title", { size: "large" })}
+  </div>
+</template>
+      `.trim();
+
+      const result = compile(source, {
+        filename: 'RenderWithArgs.dce',
+        target: 'react'
+      });
+
+      expect(result.js.code).toContain('{header?.(');
+      expect(result.js.code).toContain('"Title"');
+      expect(result.js.code).toContain('size');
+    });
   });
 });

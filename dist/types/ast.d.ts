@@ -75,7 +75,7 @@ export interface StyleBlock extends BaseNode {
 /**
  * Template AST Node Types
  */
-export type TemplateASTNodeType = 'Element' | 'Text' | 'MustacheTag' | 'IfBlock' | 'EachBlock' | 'KeyBlock' | 'Slot' | 'RenderBlock' | 'ConstTag' | 'HtmlTag' | 'DebugTag' | 'Comment';
+export type TemplateASTNodeType = 'Element' | 'Text' | 'Comment' | 'MustacheTag' | 'IfBlock' | 'EachBlock' | 'KeyBlock' | 'SnippetBlock' | 'Slot' | 'RenderBlock' | 'ConstTag' | 'HtmlTag' | 'DebugTag' | 'Comment' | 'DceElement';
 /**
  * Base Template AST Node
  */
@@ -94,7 +94,7 @@ export interface ElementASTNode extends BaseTemplateNode {
 /**
  * Template attribute types
  */
-export type TemplateAttribute = StaticAttribute | DynamicAttribute | EventAttribute | BindingAttribute | ClassDirective | StyleDirective;
+export type TemplateAttribute = StaticAttribute | DynamicAttribute | EventAttribute | BindingAttribute | ClassDirective | StyleDirective | SpreadAttribute;
 /**
  * Static attribute (e.g., class="foo")
  */
@@ -124,6 +124,7 @@ export interface EventAttribute extends BaseNode {
     type: 'EventHandler';
     name: string;
     expression: AcornNode;
+    modifiers?: string[];
 }
 /**
  * Two-way binding (e.g., bind:value={name})
@@ -150,10 +151,24 @@ export interface StyleDirective extends BaseNode {
     value: string | AcornNode;
 }
 /**
+ * Spread attribute (e.g., {...props})
+ */
+export interface SpreadAttribute extends BaseNode {
+    type: 'Spread';
+    expression: AcornNode;
+}
+/**
  * Text node
  */
 export interface TextASTNode extends BaseTemplateNode {
     type: 'Text';
+    data: string;
+}
+/**
+ * Comment node (e.g., <!-- comment -->)
+ */
+export interface CommentASTNode extends BaseTemplateNode {
+    type: 'Comment';
     data: string;
 }
 /**
@@ -238,6 +253,15 @@ export interface KeyBlockASTNode extends BaseTemplateNode {
     children: TemplateASTNode[];
 }
 /**
+ * Snippet block (e.g., {#snippet name(params)}...{/snippet})
+ */
+export interface SnippetBlockASTNode extends BaseTemplateNode {
+    type: 'SnippetBlock';
+    name: string;
+    params?: string[];
+    children: TemplateASTNode[];
+}
+/**
  * Comment node (e.g., <!-- comment -->)
  */
 export interface CommentASTNode extends BaseTemplateNode {
@@ -245,9 +269,29 @@ export interface CommentASTNode extends BaseTemplateNode {
     data: string;
 }
 /**
+ * dce: elements - Special elements with plugin-based implementation
+ * Types: element, window, boundary, head
+ */
+export interface DceElementASTNode extends BaseTemplateNode {
+    type: 'DceElement';
+    kind: 'element' | 'window' | 'boundary' | 'head';
+    tagExpression?: AcornNode;
+    attributes: TemplateAttribute[];
+    children: TemplateASTNode[];
+}
+export type DceWindowASTNode = DceElementASTNode & {
+    kind: 'window';
+};
+export type DceBoundaryASTNode = DceElementASTNode & {
+    kind: 'boundary';
+};
+export type DceHeadASTNode = DceElementASTNode & {
+    kind: 'head';
+};
+/**
  * Union type for all template AST nodes
  */
-export type TemplateASTNode = ElementASTNode | TextASTNode | MustacheTagASTNode | IfBlockASTNode | EachBlockASTNode | KeyBlockASTNode | SlotASTNode | RenderBlockASTNode | ConstTagASTNode | HtmlTagASTNode | DebugTagASTNode | CommentASTNode;
+export type TemplateASTNode = ElementASTNode | TextASTNode | CommentASTNode | MustacheTagASTNode | IfBlockASTNode | EachBlockASTNode | KeyBlockASTNode | SnippetBlockASTNode | SlotASTNode | RenderBlockASTNode | ConstTagASTNode | HtmlTagASTNode | DebugTagASTNode | CommentASTNode | DceElementASTNode;
 /**
  * Complete Durable Component AST (D-AST)
  *
