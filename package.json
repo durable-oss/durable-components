@@ -1,6 +1,6 @@
 {
-  "name": "durable-components",
-  "version": "0.1.5",
+  "name": "@durableprogramming/durable-components",
+  "version": "0.1.6",
   "description": "A Durable Component Compiler - compile once, run anywhere",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
