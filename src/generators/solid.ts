@@ -177,9 +177,11 @@ function generateComponent(ir: DurableComponentIR, ctx: GeneratorContext): strin
     body.push(generateFunctionDeclarations(ir, ctx));
   }
 
-  // Generate JSX return
+  // Generate JSX return — wrap in fragment if root is not an element
   const jsx = generateJSX(ir.template, ctx);
-  body.push(`return (\n${indent(jsx)}\n);`);
+  const needsFragment = !jsx.trimStart().startsWith('<');
+  const returnJsx = needsFragment ? `<>\n${indent(jsx)}\n</>` : jsx;
+  body.push(`return (\n${indent(returnJsx)}\n);`);
 
   const componentBody = body.join('\n\n');
 
@@ -272,6 +274,13 @@ function generateEffectDeclarations(ir: DurableComponentIR, ctx: GeneratorContex
 }
 
 /**
+ * The compound assignment operators, longest first so that alternation matches
+ * `>>>` before `>>` and `**` before `*`. Kept out of the plain-assignment path,
+ * which only handles `=`.
+ */
+const COMPOUND_ASSIGNMENT_OPERATORS = '>>>|\\*\\*|<<|>>|&&|\\|\\||\\?\\?|[+\\-*/%&|^]';
+
+/**
  * Generate function declarations
  */
 function generateFunctionDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
@@ -292,6 +301,23 @@ function generateFunctionDeclarations(ir: DurableComponentIR, ctx: GeneratorCont
         body = body.replace(
           new RegExp(`\\b${state.name}--`, 'g'),
           `${setter}(${getter}() - 1)`
+        );
+        // Replace `count += value` with `setCount(count() + value)`. This has to
+        // run before the plain-assignment rule below, which would otherwise not
+        // match at all: the operator would survive to the accessor pass and come
+        // out as `count() += value`, which is not a valid assignment target.
+        body = body.replace(
+          new RegExp(`\\b${state.name}\\s*(${COMPOUND_ASSIGNMENT_OPERATORS})=\\s*([^;]+);`, 'g'),
+          (_match, op, value) => {
+            let transformedValue = String(value).trim();
+            for (const s2 of ir.state) {
+              transformedValue = transformedValue.replace(
+                new RegExp(`\\b${s2.name}(?!\\()\\b`, 'g'),
+                `${s2.name}()`
+              );
+            }
+            return `${setter}(${getter}() ${op} ${transformedValue});`;
+          }
         );
         // Replace count = value with setCount(value)
         // Need to be careful to handle expressions that might contain state values

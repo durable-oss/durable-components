@@ -437,31 +437,85 @@ function slotNodeFromElement(node) {
 function generateSlotJSX(node, ctx, depth) {
     const source = node.name ? `props${propAccess(node.name)}` : 'props.children';
     const fallback = node.fallback || node.children || [];
-    const fallbackJSX = fallback
-        .map((child) => generateSlotFallbackJSX(child, ctx, depth + 1))
-        .filter(Boolean);
-    if (fallbackJSX.length === 0) {
+    // A lone fallback child lands directly to the right of `??`, in expression
+    // position. Several children are wrapped in a fragment first, which puts each
+    // one back in ordinary child position.
+    const meaningful = fallback.filter((child) => !isEmptyFallbackChild(child));
+    if (meaningful.length === 0) {
         return `{${source}}`;
     }
-    return `{${source} ?? ${wrapJsxChildren(fallbackJSX)}}`;
+    if (meaningful.length === 1) {
+        return `{${source} ?? ${generateSlotFallbackExpression(meaningful[0], ctx, depth + 1)}}`;
+    }
+    const childrenJSX = meaningful
+        .map((child) => generateJSX(child, ctx, depth + 1))
+        .filter(Boolean);
+    return `{${source} ?? ${wrapJsxChildren(childrenJSX)}}`;
+}
+/** A fallback child that contributes nothing, such as whitespace between tags. */
+function isEmptyFallbackChild(node) {
+    return node.type === 'text' && !node.content.trim();
 }
 /**
  * Generate one fallback child in expression position.
  *
- * Fallback content sits to the right of `??`, inside a JSX expression container
- * rather than in element-child position. Bare text is a string literal there,
- * and an `{expr}` child has to shed its braces; everything else is already a
- * valid expression.
+ * Child-position JSX is not an expression: bare text is not a string literal,
+ * and `generateJSX` wraps expressions, conditionals and loops in the braces of
+ * a JSX expression container. To the right of `??` those braces would read as
+ * an object literal, so build the expression form directly instead.
  */
-function generateSlotFallbackJSX(node, ctx, depth) {
+function generateSlotFallbackExpression(node, ctx, depth) {
     if (node.type === 'text') {
-        const content = node.content.trim();
-        return content ? JSON.stringify(content) : '';
+        return JSON.stringify(node.content.trim());
     }
     if (node.type === 'expression') {
         return transformExpression(node.expression, {});
     }
+    if (node.type === 'if') {
+        // `??` binds tighter than both `&&` and `?:`, so an unparenthesized
+        // conditional would regroup as `(props.x ?? cond) && (...)`.
+        return parenthesize(stripJsxBraces(generateIfJSX(node, ctx, depth)));
+    }
+    if (node.type === 'each') {
+        return stripJsxBraces(generateEachJSX(node, ctx, depth));
+    }
+    // Anything else (an element, a component) already generates as a bare JSX
+    // element, which is a valid expression as it stands.
     return generateJSX(node, ctx, depth);
+}
+/**
+ * Unwrap the outer braces of a JSX expression container so the expression can
+ * be used on its own. Only strips when the whole string is one container; a
+ * value such as `{a} {b}` is left alone, since its braces do not pair up
+ * across the string.
+ */
+function stripJsxBraces(jsx) {
+    const trimmed = jsx.trim();
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        return trimmed;
+    }
+    let depth = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+        if (trimmed[i] === '{') {
+            depth++;
+        }
+        else if (trimmed[i] === '}') {
+            depth--;
+            // The opening brace closed before the end, so the string is a sequence of
+            // containers rather than a single one.
+            if (depth === 0 && i < trimmed.length - 1) {
+                return trimmed;
+            }
+        }
+    }
+    return depth === 0 ? trimmed.slice(1, -1).trim() : trimmed;
+}
+/**
+ * Wrap an expression in parentheses so it survives being placed to the right of
+ * `??`, which binds tighter than the `&&` and `?:` that conditionals generate.
+ */
+function parenthesize(expr) {
+    return `(\n${(0, code_gen_1.indent)(expr)}\n)`;
 }
 /**
  * Generate if statement JSX
@@ -530,8 +584,9 @@ function eachReturnBody(children, index) {
     if (children.length === 1) {
         const only = children[0];
         // A single conditional/expression child is already `{...}`; unwrap it.
-        if (only.startsWith('{') && only.endsWith('}')) {
-            return only.slice(1, -1).trim();
+        const unwrapped = stripJsxBraces(only);
+        if (unwrapped !== only.trim()) {
+            return unwrapped;
         }
         // A single element child: inject the key prop.
         return only.replace(/^(<\w[^>]*?)( \/>|>)/, `$1 key={${index}}$2`);

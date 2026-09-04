@@ -248,12 +248,29 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
 }
 
 /**
+ * The compound assignment operators, longest first so that alternation matches
+ * `>>>` before `>>` and `**` before `*`. Kept out of the plain-assignment path,
+ * which only handles `=`.
+ */
+const COMPOUND_ASSIGNMENT_OPERATORS = '>>>|\\*\\*|<<|>>|&&|\\|\\||\\?\\?|[+\\-*/%&|^]';
+
+/**
  * Generate useEffect declarations
  */
 function applySetterTransforms(body: string, ctx: GeneratorContext): string {
   for (const [stateName, setter] of ctx.stateSetters) {
     body = body.replace(new RegExp(`\\b${stateName}\\+\\+`, 'g'), `${setter}(${stateName} + 1)`);
     body = body.replace(new RegExp(`\\b${stateName}--`, 'g'), `${setter}(${stateName} - 1)`);
+    // Rewrite a compound assignment `name += value` to `setName(name + value)`.
+    // This has to run before the plain-assignment rule below, whose guard
+    // deliberately skips compound operators so they are not mangled into
+    // `setName(+= value)`. Without this the operator survives into the output as
+    // `count += 1`, which mutates the `const` binding from useState instead of
+    // scheduling a render.
+    body = body.replace(
+      new RegExp(`\\b${stateName}\\s*(${COMPOUND_ASSIGNMENT_OPERATORS})=\\s*([^;]+);`, 'g'),
+      (_match, op, value) => `${setter}(${stateName} ${op} ${String(value).trim()});`
+    );
     // Rewrite a plain assignment `name = value` to `setName(value)`. The value
     // must not cross a `;` (a statement boundary) — otherwise a multi-statement
     // body like `a = 1; b = 2;` collapses into `setA(1; setB(2))`. The leading
