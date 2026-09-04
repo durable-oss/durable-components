@@ -323,8 +323,9 @@ function generateFunctionDeclarations(ir: DurableComponentIR, ctx: GeneratorCont
 
     // Handle block vs expression body
     const functionBody = body.startsWith('{') ? body : `{\n${indent(body)}\n}`;
+    const asyncPrefix = func.async ? 'async ' : '';
 
-    return `const ${func.name} = (${params}) => ${functionBody};`;
+    return `const ${func.name} = ${asyncPrefix}(${params}) => ${functionBody};`;
   });
 
   return declarations.join('\n\n');
@@ -463,23 +464,53 @@ function generateElementJSX(
  */
 function generateIfJSX(node: any, ctx: GeneratorContext, depth: number): string {
   const condition = transformExpression(node.condition, {} as any, ctx);
-  const consequent = node.consequent
-    .map((child: any) => generateJSX(child, ctx, depth + 1))
-    .filter(Boolean)
-    .join('\n');
+  const consequent = wrapJsxChildren(
+    node.consequent.map((child: any) => generateJSX(child, ctx, depth + 1)).filter(Boolean)
+  );
 
-  if (!node.alternate) {
+  if (!node.alternate || node.alternate.length === 0) {
     // SolidJS idiom: use && for simple conditionals
     return `{${condition} && (\n${indent(consequent)}\n)}`;
   }
 
-  const alternate = node.alternate
-    .map((child: any) => generateJSX(child, ctx, depth + 1))
-    .filter(Boolean)
-    .join('\n');
+  // SolidJS idiom: use ternary for if/else, flattening {:else if} chains
+  return `{${condition} ? (\n${indent(consequent)}\n) : ${generateElseBranch(node.alternate, ctx, depth)}}`;
+}
 
-  // SolidJS idiom: use ternary for if/else
-  return `{${condition} ? (\n${indent(consequent)}\n) : (\n${indent(alternate)}\n)}`;
+/**
+ * Render the else branch, collapsing a single nested IfNode ({:else if}) into a
+ * flat ternary cascade rather than a nested child block.
+ */
+function generateElseBranch(alternate: any[], ctx: GeneratorContext, depth: number): string {
+  if (alternate.length === 1 && alternate[0].type === 'if') {
+    const elseIf = alternate[0];
+    const condition = transformExpression(elseIf.condition, {} as any, ctx);
+    const consequent = wrapJsxChildren(
+      elseIf.consequent.map((child: any) => generateJSX(child, ctx, depth + 1)).filter(Boolean)
+    );
+
+    if (!elseIf.alternate || elseIf.alternate.length === 0) {
+      return `${condition} ? (\n${indent(consequent)}\n) : null`;
+    }
+
+    return `${condition} ? (\n${indent(consequent)}\n) : ${generateElseBranch(elseIf.alternate, ctx, depth)}`;
+  }
+
+  const alternateJsx = wrapJsxChildren(
+    alternate.map((child: any) => generateJSX(child, ctx, depth + 1)).filter(Boolean)
+  );
+  return `(\n${indent(alternateJsx)}\n)`;
+}
+
+/**
+ * Join sibling JSX children, wrapping in a fragment when there is more than one.
+ */
+function wrapJsxChildren(children: string[]): string {
+  const joined = children.join('\n');
+  if (children.length <= 1) {
+    return joined;
+  }
+  return `<>\n${indent(joined)}\n</>`;
 }
 
 /**
@@ -491,7 +522,7 @@ function generateEachJSX(node: any, ctx: GeneratorContext, depth: number): strin
   const index = node.indexName || 'index';
   const key = node.key ? transformExpression(node.key, {} as any, ctx) : index;
 
-  const children = node.children
+  const renderedChildren = node.children
     .map((child: any) => {
       // Replace item references in children
       let jsx = generateJSX(child, ctx, depth + 1);
@@ -502,11 +533,28 @@ function generateEachJSX(node: any, ctx: GeneratorContext, depth: number): strin
       }
       return jsx;
     })
-    .filter(Boolean)
-    .join('\n');
+    .filter(Boolean);
+
+  const body = eachReturnBody(renderedChildren);
 
   // SolidJS .map() works well for simple cases
-  return `{${array}.map((${item}, ${index}) => (\n${indent(children)}\n))}`;
+  return `{${array}.map((${item}, ${index}) => (\n${indent(body)}\n))}`;
+}
+
+/**
+ * Build the JSX a `.map()` callback returns. A single conditional/expression
+ * child is already `{...}`; unwrap it so the arrow doesn't read `( {expr} )` as
+ * an object literal. Multiple children are wrapped in a fragment.
+ */
+function eachReturnBody(children: string[]): string {
+  if (children.length === 1) {
+    const only = children[0];
+    if (only.startsWith('{') && only.endsWith('}')) {
+      return only.slice(1, -1).trim();
+    }
+    return only;
+  }
+  return `<>\n${indent(children.join('\n'))}\n</>`;
 }
 
 /**

@@ -6,8 +6,10 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.transformTemplate = transformTemplate;
+exports.isFunctionExpression = isFunctionExpression;
 exports.extractExpression = extractExpression;
 const dce_elements_1 = require("./dce-elements");
+const utils_1 = require("../parser/parsimmon/utils");
 /**
  * Transform template AST nodes to IR template nodes
  * Returns both the template and any snippets found
@@ -196,9 +198,14 @@ function transformElement(node, context) {
             const eventName = attr.name;
             const modifiers = attr.modifiers;
             const expr = extractExpression(attr.expression);
+            // A bare reference (e.g. `increment`) is a function name and gets the
+            // `functions.` prefix so generators resolve it. An inline arrow/function
+            // expression (e.g. `(e) => setSource(e.target.value)`) is emitted as-is —
+            // prefixing it would corrupt the handler.
+            const isInlineFunction = isFunctionExpression(attr.expression);
             attributes.push({
                 name: `on:${eventName}`,
-                value: `functions.${expr}`,
+                value: isInlineFunction ? expr : `functions.${expr}`,
                 modifiers: modifiers && modifiers.length > 0 ? modifiers : undefined
             });
         }
@@ -223,8 +230,15 @@ function transformElement(node, context) {
             if (attr.value && attr.value.length > 0) {
                 const firstValue = attr.value[0];
                 if (firstValue.type === 'Text') {
-                    // Static attribute
-                    bindings[attr.name] = `"${firstValue.data}"`;
+                    // Static attribute — but the text may interpolate expressions, e.g.
+                    // class="base {cond ? 'x' : ''}". Convert those to a template literal
+                    // so the expression actually evaluates on every target.
+                    if (containsInterpolation(firstValue.data)) {
+                        bindings[attr.name] = interpolatedTextToTemplateLiteral(firstValue.data);
+                    }
+                    else {
+                        bindings[attr.name] = `"${firstValue.data}"`;
+                    }
                 }
                 else if (firstValue.type === 'MustacheTag') {
                     // Dynamic attribute
@@ -346,6 +360,31 @@ function transformRenderBlock(node) {
     };
 }
 /**
+ * Determine whether an expression AST is an inline function (arrow or
+ * function expression), unwrapping Acorn's Program/ExpressionStatement/Chain
+ * wrappers first.
+ */
+function isFunctionExpression(node) {
+    let n = node;
+    let guard = 0;
+    while (n && typeof n === 'object' && guard++ < 50) {
+        if (n.type === 'Program') {
+            n = Array.isArray(n.body) && n.body.length > 0 ? n.body[0] : null;
+            continue;
+        }
+        if (n.type === 'ExpressionStatement') {
+            n = n.expression;
+            continue;
+        }
+        if (n.type === 'ChainExpression') {
+            n = n.expression;
+            continue;
+        }
+        return n.type === 'ArrowFunctionExpression' || n.type === 'FunctionExpression';
+    }
+    return false;
+}
+/**
  * Extract expression string from AST node
  */
 function extractExpression(node) {
@@ -429,19 +468,77 @@ function extractExpression(node) {
                 : '';
             return `${callee}${optional}(${args})`;
         }
+        // Handle await expression (await foo()) — without this, an awaited
+        // statement serializes to '' and is silently dropped from a block body.
+        if (n.type === 'AwaitExpression') {
+            return `await ${extract(n.argument, depth + 1)}`;
+        }
+        // Handle yield expression (yield / yield* foo)
+        if (n.type === 'YieldExpression') {
+            const star = n.delegate ? '*' : '';
+            const arg = n.argument ? ` ${extract(n.argument, depth + 1)}` : '';
+            return `yield${star}${arg}`;
+        }
         // Handle arrow function
         if (n.type === 'ArrowFunctionExpression') {
-            // For effects/derived, we want the body
+            const params = extractParams(n.params, depth);
+            const asyncPrefix = n.async ? 'async ' : '';
             if (n.body && n.body.type === 'BlockStatement') {
-                // Multi-statement function - extract source would be better
-                return '() => { /* ... */ }';
+                return `${asyncPrefix}(${params}) => ${extract(n.body, depth + 1)}`;
             }
-            return extract(n.body, depth + 1);
+            // Expression body. Wrap object-literal bodies in parens so they aren't
+            // mistaken for a block: () => ({ ... })
+            const body = extract(n.body, depth + 1);
+            const wrappedBody = n.body && n.body.type === 'ObjectExpression' ? `(${body})` : body;
+            return `${asyncPrefix}(${params}) => ${wrappedBody}`;
+        }
+        // Handle function expression
+        if (n.type === 'FunctionExpression') {
+            const params = extractParams(n.params, depth);
+            const asyncPrefix = n.async ? 'async ' : '';
+            const name = n.id && typeof n.id.name === 'string' ? ` ${n.id.name}` : '';
+            const body = n.body ? extract(n.body, depth + 1) : '{}';
+            return `${asyncPrefix}function${name}(${params}) ${body}`;
         }
         // Handle block statement
         if (n.type === 'BlockStatement') {
-            // Return simplified version
-            return '{ /* ... */ }';
+            const statements = Array.isArray(n.body)
+                ? n.body.map((stmt) => extract(stmt, depth + 1)).filter(Boolean)
+                : [];
+            if (statements.length === 0) {
+                return '{}';
+            }
+            return `{ ${statements.map((s) => (s.endsWith(';') || s.endsWith('}') ? s : `${s};`)).join(' ')} }`;
+        }
+        // Handle assignment expression (a = b, a += b, etc.)
+        if (n.type === 'AssignmentExpression') {
+            const left = extract(n.left, depth + 1);
+            const right = extract(n.right, depth + 1);
+            const operator = typeof n.operator === 'string' ? n.operator : '=';
+            return `${left} ${operator} ${right}`;
+        }
+        // Handle sequence expression (a, b, c)
+        if (n.type === 'SequenceExpression') {
+            const expressions = Array.isArray(n.expressions)
+                ? n.expressions.map((e) => extract(e, depth + 1)).filter(Boolean)
+                : [];
+            return expressions.join(', ');
+        }
+        // Handle new expression (new Foo(args))
+        if (n.type === 'NewExpression') {
+            const callee = extract(n.callee, depth + 1);
+            const args = Array.isArray(n.arguments)
+                ? n.arguments.map((arg) => extract(arg, depth + 1)).join(', ')
+                : '';
+            return `new ${callee}(${args})`;
+        }
+        // Handle spread element (...args)
+        if (n.type === 'SpreadElement' || n.type === 'RestElement') {
+            return `...${extract(n.argument, depth + 1)}`;
+        }
+        // Handle return statement
+        if (n.type === 'ReturnStatement') {
+            return n.argument ? `return ${extract(n.argument, depth + 1)}` : 'return';
         }
         // Handle expression statement
         if (n.type === 'ExpressionStatement') {
@@ -516,7 +613,167 @@ function extractExpression(node) {
         // Fallback
         return '';
     }
+    /**
+     * Serialize a function parameter list (handles identifiers, defaults,
+     * destructuring, and rest params).
+     */
+    function extractParams(params, depth) {
+        if (!Array.isArray(params))
+            return '';
+        return params.map((p) => extractParam(p, depth + 1)).join(', ');
+    }
+    function extractParam(p, depth) {
+        if (!p || typeof p !== 'object')
+            return '';
+        if (depth > MAX_DEPTH)
+            return '...';
+        switch (p.type) {
+            case 'Identifier':
+                return typeof p.name === 'string' ? p.name : '';
+            case 'AssignmentPattern':
+                return `${extractParam(p.left, depth + 1)} = ${extract(p.right, depth + 1)}`;
+            case 'RestElement':
+                return `...${extractParam(p.argument, depth + 1)}`;
+            case 'ArrayPattern': {
+                const elements = Array.isArray(p.elements)
+                    ? p.elements.map((el) => (el ? extractParam(el, depth + 1) : '')).join(', ')
+                    : '';
+                return `[${elements}]`;
+            }
+            case 'ObjectPattern': {
+                const props = Array.isArray(p.properties)
+                    ? p.properties
+                        .map((prop) => {
+                        if (!prop)
+                            return '';
+                        if (prop.type === 'RestElement') {
+                            return `...${extractParam(prop.argument, depth + 1)}`;
+                        }
+                        const key = prop.key ? extract(prop.key, depth + 1) : '';
+                        if (prop.shorthand) {
+                            return prop.value && prop.value.type === 'AssignmentPattern'
+                                ? extractParam(prop.value, depth + 1)
+                                : key;
+                        }
+                        return `${key}: ${extractParam(prop.value, depth + 1)}`;
+                    })
+                        .filter(Boolean)
+                        .join(', ')
+                    : '';
+                return `{${props}}`;
+            }
+            default:
+                return extract(p, depth + 1);
+        }
+    }
     return extract(node);
+}
+/**
+ * Detect whether a static attribute value contains an interpolated
+ * `{expression}` segment (ignoring escaped braces).
+ */
+function containsInterpolation(text) {
+    if (typeof text !== 'string')
+        return false;
+    return /(^|[^\\]){/.test(text) && text.includes('}');
+}
+/**
+ * Convert an attribute value that mixes static text and `{expression}`
+ * segments into a template-literal expression string, e.g.
+ *   `dcid-step {snap.step === 'upload' ? 'active' : ''}`
+ * becomes
+ *   `dcid-step ${snap.step === 'upload' ? 'active' : ''}`  (wrapped in backticks)
+ */
+function interpolatedTextToTemplateLiteral(text) {
+    const segments = splitInterpolation(text);
+    let result = '`';
+    for (const seg of segments) {
+        if (seg.type === 'text') {
+            // Escape backticks and ${ that would otherwise break the template literal.
+            result += seg.value.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+        }
+        else {
+            let expr = seg.value.trim();
+            try {
+                expr = extractExpression((0, utils_1.parseExpression)(seg.value));
+            }
+            catch {
+                // Fall back to the raw expression text if it can't be parsed.
+            }
+            result += '${' + expr + '}';
+        }
+    }
+    result += '`';
+    return result;
+}
+/**
+ * Split a string into alternating static-text and expression segments,
+ * respecting balanced braces, strings, and template literals inside the
+ * `{...}` expression so a ternary like `{a ? 'x' : ''}` stays whole.
+ */
+function splitInterpolation(text) {
+    const segments = [];
+    let buffer = '';
+    let i = 0;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '\\' && i + 1 < text.length) {
+            // Preserve escaped characters (e.g. \{) as literal text.
+            buffer += text[i + 1];
+            i += 2;
+            continue;
+        }
+        if (ch === '{') {
+            if (buffer) {
+                segments.push({ type: 'text', value: buffer });
+                buffer = '';
+            }
+            // Scan to the matching closing brace, tracking nesting and strings.
+            let depth = 1;
+            let j = i + 1;
+            let expr = '';
+            let quote = null;
+            while (j < text.length && depth > 0) {
+                const c = text[j];
+                if (quote) {
+                    expr += c;
+                    if (c === '\\' && j + 1 < text.length) {
+                        expr += text[j + 1];
+                        j += 2;
+                        continue;
+                    }
+                    if (c === quote)
+                        quote = null;
+                    j++;
+                    continue;
+                }
+                if (c === '"' || c === "'" || c === '`') {
+                    quote = c;
+                    expr += c;
+                    j++;
+                    continue;
+                }
+                if (c === '{')
+                    depth++;
+                else if (c === '}') {
+                    depth--;
+                    if (depth === 0)
+                        break;
+                }
+                expr += c;
+                j++;
+            }
+            segments.push({ type: 'expr', value: expr });
+            i = j + 1; // skip the closing brace
+            continue;
+        }
+        buffer += ch;
+        i++;
+    }
+    if (buffer) {
+        segments.push({ type: 'text', value: buffer });
+    }
+    return segments;
 }
 /**
  * Add proper prefix (state./props./derived.) to expressions

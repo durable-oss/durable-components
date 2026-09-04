@@ -75,6 +75,7 @@ export interface FunctionDefinition {
   name: string;
   params?: string[]; // Parameter names
   body: string; // JavaScript function body
+  async?: boolean; // Whether the function is declared async
 }
 
 /**

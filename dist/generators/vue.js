@@ -9,6 +9,28 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateVue = generateVue;
 const code_gen_1 = require("../utils/code-gen");
 /**
+ * Render `name="value"` for a Vue attribute whose value is a JS expression
+ * (`:prop`, `v-if`, `@event`, `v-for`, …).
+ *
+ * Expression string literals are serialized with double quotes (JSON.stringify
+ * in the transformer), so dropping a raw expression into a double-quoted HTML
+ * attribute produces broken markup like `v-if="snap.step === "upload""`. Pick a
+ * delimiter the value doesn't contain; if it contains both, keep double quotes
+ * and escape the embedded ones as `&quot;` (Vue's template compiler decodes the
+ * entity before evaluating the expression).
+ */
+function vueDynamicAttr(name, value) {
+    const hasDouble = value.includes('"');
+    const hasSingle = value.includes("'");
+    if (!hasDouble) {
+        return `${name}="${value}"`;
+    }
+    if (!hasSingle) {
+        return `${name}='${value}'`;
+    }
+    return `${name}="${value.replace(/"/g, '&quot;')}"`;
+}
+/**
  * Generate Vue 3 component from IR
  */
 function generateVue(ir, options = {}) {
@@ -269,7 +291,8 @@ function generateFunctionDeclarations(ir, ctx) {
         }
         // Handle block vs expression body
         const functionBody = body.startsWith('{') ? body : `{\n${(0, code_gen_1.indent)(body)}\n}`;
-        return `const ${func.name} = (${params}) => ${functionBody};`;
+        const asyncPrefix = func.async ? 'async ' : '';
+        return `const ${func.name} = ${asyncPrefix}(${params}) => ${functionBody};`;
     });
     return declarations.join('\n\n');
 }
@@ -327,12 +350,7 @@ function generateElement(node, ctx, depth) {
         else {
             // Dynamic binding
             const transformedValue = transformTemplateExpression(valueStr, ctx);
-            if (key === 'class') {
-                attrs.push(`:class="${transformedValue}"`);
-            }
-            else {
-                attrs.push(`:${key}="${transformedValue}"`);
-            }
+            attrs.push(vueDynamicAttr(`:${key}`, transformedValue));
         }
     }
     // Handle attributes (events, bindings, etc.)
@@ -353,7 +371,7 @@ function generateElement(node, ctx, depth) {
                     }
                 }).join('.')
                 : '';
-            attrs.push(`@${eventName}${vueModifiers}="${handler}"`);
+            attrs.push(vueDynamicAttr(`@${eventName}${vueModifiers}`, handler));
         }
         else if (attr.name.startsWith('bind:')) {
             // Two-way binding: bind:value -> v-model
@@ -375,7 +393,7 @@ function generateElement(node, ctx, depth) {
             // Convert to Vue's class binding syntax
             const className = attr.name.slice(6);
             const condition = transformTemplateExpression(attr.value, ctx);
-            attrs.push(`:class="{ '${className}': ${condition} }"`);
+            attrs.push(vueDynamicAttr(':class', `{ '${className}': ${condition} }`));
         }
         else {
             // Regular attribute
@@ -412,34 +430,43 @@ function generateIf(node, ctx, depth) {
         .map((child) => generateTemplate(child, ctx, depth))
         .filter((s) => s.trim().length > 0)
         .join('\n');
-    if (!node.alternate) {
-        // Find the first element to attach v-if to
-        const lines = consequent.split('\n');
-        const firstNonEmptyLine = lines.findIndex((line) => line.trim().length > 0);
-        if (firstNonEmptyLine >= 0 && lines[firstNonEmptyLine].trim().startsWith('<')) {
-            // Insert v-if into the first tag (after opening <tag)
-            const firstLine = lines[firstNonEmptyLine].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 v-if="${condition}"$2`);
-            const result = [...lines.slice(0, firstNonEmptyLine), firstLine, ...lines.slice(firstNonEmptyLine + 1)].join('\n');
-            return result;
-        }
-        return consequent;
+    // Attach v-if to the consequent's first element.
+    const branches = [injectDirective(consequent, vueDynamicAttr('v-if', condition))];
+    // Walk the else / else-if chain. A parsed `{:else if}` is stored as an
+    // alternate containing a single nested IfNode, which becomes a sibling
+    // element carrying v-else-if. A plain `{:else}` becomes v-else.
+    let alternate = node.alternate;
+    while (alternate && alternate.length === 1 && alternate[0].type === 'if') {
+        const elseIf = alternate[0];
+        const elseIfCondition = transformTemplateExpression(elseIf.condition, ctx);
+        const elseIfConsequent = elseIf.consequent
+            .map((child) => generateTemplate(child, ctx, depth))
+            .filter((s) => s.trim().length > 0)
+            .join('\n');
+        branches.push(injectDirective(elseIfConsequent, vueDynamicAttr('v-else-if', elseIfCondition)));
+        alternate = elseIf.alternate;
     }
-    const alternate = node.alternate
-        .map((child) => generateTemplate(child, ctx, depth))
-        .filter((s) => s.trim().length > 0)
-        .join('\n');
-    // Add v-if to consequent and v-else to alternate
-    const consequentLines = consequent.split('\n');
-    const alternateLines = alternate.split('\n');
-    const firstConsequentIdx = consequentLines.findIndex((line) => line.trim().startsWith('<'));
-    const firstAlternateIdx = alternateLines.findIndex((line) => line.trim().startsWith('<'));
-    if (firstConsequentIdx >= 0) {
-        consequentLines[firstConsequentIdx] = consequentLines[firstConsequentIdx].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 v-if="${condition}"$2`);
+    if (alternate && alternate.length > 0) {
+        const alternateHtml = alternate
+            .map((child) => generateTemplate(child, ctx, depth))
+            .filter((s) => s.trim().length > 0)
+            .join('\n');
+        branches.push(injectDirective(alternateHtml, 'v-else'));
     }
-    if (firstAlternateIdx >= 0) {
-        alternateLines[firstAlternateIdx] = alternateLines[firstAlternateIdx].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 v-else$2`);
+    return branches.join('\n');
+}
+/**
+ * Inject a Vue directive (v-if / v-else-if / v-else) into the first element of
+ * a rendered HTML fragment.
+ */
+function injectDirective(html, directive) {
+    const lines = html.split('\n');
+    const firstIdx = lines.findIndex((line) => line.trim().startsWith('<'));
+    if (firstIdx < 0) {
+        return html;
     }
-    return `${consequentLines.join('\n')}\n${alternateLines.join('\n')}`;
+    lines[firstIdx] = lines[firstIdx].replace(/^(\s*<[a-zA-Z][\w-]*)(\s|>|\/)/, `$1 ${directive}$2`);
+    return lines.join('\n');
 }
 /**
  * Generate each block
@@ -454,16 +481,10 @@ function generateEach(node, ctx, depth) {
         .filter((s) => s.trim().length > 0)
         .join('\n');
     // Build v-for directive
-    let vFor = `v-for="`;
-    if (index) {
-        vFor += `(${item}, ${index})`;
-    }
-    else {
-        vFor += item;
-    }
-    vFor += ` in ${array}"`;
+    const iterator = index ? `(${item}, ${index})` : item;
+    const vFor = vueDynamicAttr('v-for', `${iterator} in ${array}`);
     // Add key if specified
-    const keyAttr = key ? ` :key="${key}"` : '';
+    const keyAttr = key ? ` ${vueDynamicAttr(':key', transformTemplateExpression(key, ctx))}` : '';
     // Insert v-for into the first child element
     const childLines = children.split('\n');
     const firstNonEmptyLine = childLines.findIndex((line) => line.trim().length > 0);
@@ -549,7 +570,7 @@ function generateDceElement(node, ctx, depth) {
     // Collect all attributes
     const attrs = [];
     // Vue uses :is directive for dynamic components
-    attrs.push(`:is="${componentIs}"`);
+    attrs.push(vueDynamicAttr(':is', componentIs));
     // Handle bindings
     for (const [key, value] of Object.entries(bindings)) {
         const valueStr = String(value);
@@ -561,7 +582,7 @@ function generateDceElement(node, ctx, depth) {
         }
         else {
             const transformedValue = transformTemplateExpression(valueStr, ctx);
-            attrs.push(`:${key}="${transformedValue}"`);
+            attrs.push(vueDynamicAttr(`:${key}`, transformedValue));
         }
     }
     // Handle attributes
@@ -579,7 +600,7 @@ function generateDceElement(node, ctx, depth) {
                     }
                 }).join('.')
                 : '';
-            attrs.push(`@${eventName}${vueModifiers}="${handler}"`);
+            attrs.push(vueDynamicAttr(`@${eventName}${vueModifiers}`, handler));
         }
         else if (attr.name.startsWith('bind:')) {
             const propName = attr.name.slice(5);
@@ -594,7 +615,7 @@ function generateDceElement(node, ctx, depth) {
         else if (attr.name.startsWith('class:')) {
             const className = attr.name.slice(6);
             const condition = transformTemplateExpression(attr.value, ctx);
-            attrs.push(`:class="{ '${className}': ${condition} }"`);
+            attrs.push(vueDynamicAttr(':class', `{ '${className}': ${condition} }`));
         }
         else {
             attrs.push(`${attr.name}="${attr.value}"`);
@@ -650,7 +671,7 @@ function generateDceBoundary(node, ctx, depth) {
     }
     // Vue doesn't have a built-in ErrorBoundary component
     // Users would need to create a wrapper component
-    return `<ErrorBoundary :on-error="${onError}">\n${(0, code_gen_1.indent)(childrenHTML)}\n</ErrorBoundary>`;
+    return `<ErrorBoundary ${vueDynamicAttr(':on-error', onError)}>\n${(0, code_gen_1.indent)(childrenHTML)}\n</ErrorBoundary>`;
 }
 /**
  * Generate dce:head (document head)

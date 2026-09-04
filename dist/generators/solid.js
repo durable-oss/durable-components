@@ -248,7 +248,8 @@ function generateFunctionDeclarations(ir, ctx) {
         }
         // Handle block vs expression body
         const functionBody = body.startsWith('{') ? body : `{\n${(0, code_gen_1.indent)(body)}\n}`;
-        return `const ${func.name} = (${params}) => ${functionBody};`;
+        const asyncPrefix = func.async ? 'async ' : '';
+        return `const ${func.name} = ${asyncPrefix}(${params}) => ${functionBody};`;
     });
     return declarations.join('\n\n');
 }
@@ -361,20 +362,40 @@ function generateElementJSX(node, ctx, depth) {
  */
 function generateIfJSX(node, ctx, depth) {
     const condition = transformExpression(node.condition, {}, ctx);
-    const consequent = node.consequent
-        .map((child) => generateJSX(child, ctx, depth + 1))
-        .filter(Boolean)
-        .join('\n');
-    if (!node.alternate) {
+    const consequent = wrapJsxChildren(node.consequent.map((child) => generateJSX(child, ctx, depth + 1)).filter(Boolean));
+    if (!node.alternate || node.alternate.length === 0) {
         // SolidJS idiom: use && for simple conditionals
         return `{${condition} && (\n${(0, code_gen_1.indent)(consequent)}\n)}`;
     }
-    const alternate = node.alternate
-        .map((child) => generateJSX(child, ctx, depth + 1))
-        .filter(Boolean)
-        .join('\n');
-    // SolidJS idiom: use ternary for if/else
-    return `{${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : (\n${(0, code_gen_1.indent)(alternate)}\n)}`;
+    // SolidJS idiom: use ternary for if/else, flattening {:else if} chains
+    return `{${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : ${generateElseBranch(node.alternate, ctx, depth)}}`;
+}
+/**
+ * Render the else branch, collapsing a single nested IfNode ({:else if}) into a
+ * flat ternary cascade rather than a nested child block.
+ */
+function generateElseBranch(alternate, ctx, depth) {
+    if (alternate.length === 1 && alternate[0].type === 'if') {
+        const elseIf = alternate[0];
+        const condition = transformExpression(elseIf.condition, {}, ctx);
+        const consequent = wrapJsxChildren(elseIf.consequent.map((child) => generateJSX(child, ctx, depth + 1)).filter(Boolean));
+        if (!elseIf.alternate || elseIf.alternate.length === 0) {
+            return `${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : null`;
+        }
+        return `${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : ${generateElseBranch(elseIf.alternate, ctx, depth)}`;
+    }
+    const alternateJsx = wrapJsxChildren(alternate.map((child) => generateJSX(child, ctx, depth + 1)).filter(Boolean));
+    return `(\n${(0, code_gen_1.indent)(alternateJsx)}\n)`;
+}
+/**
+ * Join sibling JSX children, wrapping in a fragment when there is more than one.
+ */
+function wrapJsxChildren(children) {
+    const joined = children.join('\n');
+    if (children.length <= 1) {
+        return joined;
+    }
+    return `<>\n${(0, code_gen_1.indent)(joined)}\n</>`;
 }
 /**
  * Generate each loop JSX (using For component would be better, but .map works)
@@ -384,7 +405,7 @@ function generateEachJSX(node, ctx, depth) {
     const item = node.itemName;
     const index = node.indexName || 'index';
     const key = node.key ? transformExpression(node.key, {}, ctx) : index;
-    const children = node.children
+    const renderedChildren = node.children
         .map((child) => {
         // Replace item references in children
         let jsx = generateJSX(child, ctx, depth + 1);
@@ -395,10 +416,25 @@ function generateEachJSX(node, ctx, depth) {
         }
         return jsx;
     })
-        .filter(Boolean)
-        .join('\n');
+        .filter(Boolean);
+    const body = eachReturnBody(renderedChildren);
     // SolidJS .map() works well for simple cases
-    return `{${array}.map((${item}, ${index}) => (\n${(0, code_gen_1.indent)(children)}\n))}`;
+    return `{${array}.map((${item}, ${index}) => (\n${(0, code_gen_1.indent)(body)}\n))}`;
+}
+/**
+ * Build the JSX a `.map()` callback returns. A single conditional/expression
+ * child is already `{...}`; unwrap it so the arrow doesn't read `( {expr} )` as
+ * an object literal. Multiple children are wrapped in a fragment.
+ */
+function eachReturnBody(children) {
+    if (children.length === 1) {
+        const only = children[0];
+        if (only.startsWith('{') && only.endsWith('}')) {
+            return only.slice(1, -1).trim();
+        }
+        return only;
+    }
+    return `<>\n${(0, code_gen_1.indent)(children.join('\n'))}\n</>`;
 }
 /**
  * Generate render block JSX (for {@render snippet()} syntax)

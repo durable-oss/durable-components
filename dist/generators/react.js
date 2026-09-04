@@ -202,21 +202,40 @@ function generateDerivedDeclarations(ir, ctx) {
 /**
  * Generate useEffect declarations
  */
-function applySetterTransforms(body, ir, ctx) {
-    for (const state of ir.state) {
-        const setter = ctx.stateSetters.get(state.name);
-        if (setter) {
-            body = body.replace(new RegExp(`\\b${state.name}\\+\\+`, 'g'), `${setter}(${state.name} + 1)`);
-            body = body.replace(new RegExp(`\\b${state.name}--`, 'g'), `${setter}(${state.name} - 1)`);
-            body = body.replace(new RegExp(`\\b${state.name}\\s*=\\s*([^=].+?);`, 'g'), `${setter}($1);`);
-        }
+function applySetterTransforms(body, ctx) {
+    for (const [stateName, setter] of ctx.stateSetters) {
+        body = body.replace(new RegExp(`\\b${stateName}\\+\\+`, 'g'), `${setter}(${stateName} + 1)`);
+        body = body.replace(new RegExp(`\\b${stateName}--`, 'g'), `${setter}(${stateName} - 1)`);
+        // Rewrite a plain assignment `name = value` to `setName(value)`. The value
+        // must not cross a `;` (a statement boundary) — otherwise a multi-statement
+        // body like `a = 1; b = 2;` collapses into `setA(1; setB(2))`. The leading
+        // `(?![=<>!+\-*/%&|^])` after `=` rejects compound/comparison operators
+        // (`==`, `+=`, `<=`, …) so only true assignments are rewritten.
+        body = body.replace(new RegExp(`\\b${stateName}\\s*=\\s*(?![=<>!+\\-*/%&|^])([^;]+);`, 'g'), `${setter}($1);`);
     }
     return body;
+}
+/**
+ * Rewrite `$state` assignments inside an inline event-handler expression so they
+ * go through the React setter. Handles both block bodies (`() => { a = 1; }`,
+ * delegated to applySetterTransforms) and the expression-bodied arrow form
+ * (`() => a = 5`), which has no statement terminator for the block path to anchor
+ * to. A bare reference or call (`increment`, `() => foo()`) is returned unchanged.
+ */
+function transformHandler(handler, ctx) {
+    let result = applySetterTransforms(handler, ctx);
+    // Expression-bodied arrow assigning to a state var: `(...) => name = value`.
+    // applySetterTransforms only rewrites `;`-terminated statements, so catch the
+    // un-terminated trailing assignment here.
+    for (const [stateName, setter] of ctx.stateSetters) {
+        result = result.replace(new RegExp(`(=>\\s*)${stateName}\\s*=\\s*(?![=<>!+\\-*/%&|^])([^;{].*)$`), `$1${setter}($2)`);
+    }
+    return result;
 }
 function generateEffectDeclarations(ir, ctx) {
     const declarations = ir.effects.map((effect) => {
         let expr = transformExpression(effect.expression, ir);
-        expr = applySetterTransforms(expr, ir, ctx);
+        expr = applySetterTransforms(expr, ctx);
         const deps = effect.dependencies.join(', ');
         const effectBody = expr.startsWith('{') ? expr : `{\n${(0, code_gen_1.indent)(expr)}\n}`;
         return `useEffect(() => ${effectBody}, [${deps}]);`;
@@ -229,9 +248,10 @@ function generateEffectDeclarations(ir, ctx) {
 function generateFunctionDeclarations(ir, ctx) {
     const declarations = ir.functions.map((func) => {
         const params = func.params?.join(', ') || '';
-        let body = applySetterTransforms(func.body, ir, ctx);
+        let body = applySetterTransforms(func.body, ctx);
         const functionBody = body.startsWith('{') ? body : `{\n${(0, code_gen_1.indent)(body)}\n}`;
-        return `const ${func.name} = (${params}) => ${functionBody};`;
+        const asyncPrefix = func.async ? 'async ' : '';
+        return `const ${func.name} = ${asyncPrefix}(${params}) => ${functionBody};`;
     });
     return declarations.join('\n\n');
 }
@@ -303,13 +323,20 @@ function generateElementJSX(node, ctx, depth) {
         if (attr.name.startsWith('on:')) {
             // Event handler: on:click -> onClick
             const eventName = 'on' + capitalize(attr.name.slice(3));
-            const handler = attr.value.replace('functions.', '');
+            const handler = transformHandler(attr.value.replace('functions.', ''), ctx);
             if (attr.modifiers && attr.modifiers.length > 0) {
                 props.push(`${eventName}={${(0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)}}`);
             }
             else {
                 // Wrap call expressions in an arrow function so they aren't invoked on render
-                const isCallExpr = /\w+\(.*\)/.test(handler) && !handler.trimStart().startsWith('(') && !handler.trimStart().startsWith('function');
+                // A call expression (`foo()`) must be wrapped so it isn't invoked on
+                // render, but an inline handler that is already a function — `(e) => …`,
+                // `function …`, or `async () => …` — must be emitted as-is.
+                const trimmed = handler.trimStart();
+                const isAlreadyHandler = trimmed.startsWith('(') ||
+                    trimmed.startsWith('function') ||
+                    /^async\b/.test(trimmed);
+                const isCallExpr = /\w+\(.*\)/.test(handler) && !isAlreadyHandler;
                 const handlerExpr = isCallExpr ? `() => ${handler}` : handler;
                 props.push(`${eventName}={${handlerExpr}}`);
             }
@@ -369,18 +396,42 @@ function generateElementJSX(node, ctx, depth) {
  */
 function generateIfJSX(node, ctx, depth) {
     const condition = transformExpression(node.condition, {});
-    const consequent = node.consequent
-        .map((child) => generateJSX(child, ctx, depth + 1))
-        .filter(Boolean)
-        .join('\n');
-    if (!node.alternate) {
+    const consequent = wrapJsxChildren(node.consequent.map((child) => generateJSX(child, ctx, depth + 1)).filter(Boolean));
+    if (!node.alternate || node.alternate.length === 0) {
         return `{${condition} && (\n${(0, code_gen_1.indent)(consequent)}\n)}`;
     }
-    const alternate = node.alternate
-        .map((child) => generateJSX(child, ctx, depth + 1))
-        .filter(Boolean)
-        .join('\n');
-    return `{${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : (\n${(0, code_gen_1.indent)(alternate)}\n)}`;
+    return `{${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : ${generateElseBranch(node.alternate, ctx, depth)}}`;
+}
+/**
+ * Render the else branch of a ternary. When the alternate is a single nested
+ * IfNode (an `{:else if}` chain), emit a flat ternary cascade
+ * (`cond ? (...) : ...`) rather than wrapping the nested conditional in `(...)`,
+ * which would drop a bare object literal into a JSX expression slot.
+ */
+function generateElseBranch(alternate, ctx, depth) {
+    if (alternate.length === 1 && alternate[0].type === 'if') {
+        const elseIf = alternate[0];
+        const condition = transformExpression(elseIf.condition, {});
+        const consequent = wrapJsxChildren(elseIf.consequent.map((child) => generateJSX(child, ctx, depth + 1)).filter(Boolean));
+        if (!elseIf.alternate || elseIf.alternate.length === 0) {
+            // `{:else if}` with no trailing `{:else}` — render nothing when false.
+            return `${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : null`;
+        }
+        return `${condition} ? (\n${(0, code_gen_1.indent)(consequent)}\n) : ${generateElseBranch(elseIf.alternate, ctx, depth)}`;
+    }
+    const alternateJsx = wrapJsxChildren(alternate.map((child) => generateJSX(child, ctx, depth + 1)).filter(Boolean));
+    return `(\n${(0, code_gen_1.indent)(alternateJsx)}\n)`;
+}
+/**
+ * Join sibling JSX children, wrapping in a fragment when there is more than one
+ * so the result is a single valid JSX expression.
+ */
+function wrapJsxChildren(children) {
+    const joined = children.join('\n');
+    if (children.length <= 1) {
+        return joined;
+    }
+    return `<>\n${(0, code_gen_1.indent)(joined)}\n</>`;
 }
 /**
  * Generate each loop JSX
@@ -390,13 +441,33 @@ function generateEachJSX(node, ctx, depth) {
     const item = node.itemName;
     const index = node.indexName || 'index';
     const key = node.key ? transformExpression(node.key, {}) : index;
-    const children = node.children
+    const renderedChildren = node.children
         .map((child) => generateJSX(child, ctx, depth + 1))
-        .filter(Boolean)
-        .join('\n');
-    // Inject key prop into the first element of the child JSX
-    const keyed = children.replace(/^(<\w[^>]*)( \/>|>)/, `$1 key={${index}}$2`);
-    return `{${array}.map((${item}, ${index}) => (\n${(0, code_gen_1.indent)(keyed)}\n))}`;
+        .filter(Boolean);
+    const body = eachReturnBody(renderedChildren, index);
+    return `{${array}.map((${item}, ${index}) => (\n${(0, code_gen_1.indent)(body)}\n))}`;
+}
+/**
+ * Build the JSX a `.map()` callback returns. The arrow already supplies an
+ * expression position, so a conditional/expression child must be emitted
+ * without its outer `{...}` (otherwise `( {expr} )` is read as an object
+ * literal). Multiple children are wrapped in a fragment so the callback returns
+ * a single node.
+ */
+function eachReturnBody(children, index) {
+    if (children.length === 1) {
+        const only = children[0];
+        // A single conditional/expression child is already `{...}`; unwrap it.
+        if (only.startsWith('{') && only.endsWith('}')) {
+            return only.slice(1, -1).trim();
+        }
+        // A single element child: inject the key prop.
+        return only.replace(/^(<\w[^>]*?)( \/>|>)/, `$1 key={${index}}$2`);
+    }
+    // Multiple children: key the first element and wrap them in a fragment.
+    const joined = children.join('\n');
+    const keyed = joined.replace(/^(<\w[^>]*?)( \/>|>)/, `$1 key={${index}}$2`);
+    return `<>\n${(0, code_gen_1.indent)(keyed)}\n</>`;
 }
 /**
  * Generate render block JSX (for {@render snippet()} syntax)
@@ -455,7 +526,7 @@ function generateDceElementJSX(node, ctx, depth) {
     for (const attr of attributes) {
         if (attr.name.startsWith('on:')) {
             const eventName = 'on' + capitalize(attr.name.slice(3));
-            const handler = attr.value.replace('functions.', '');
+            const handler = transformHandler(attr.value.replace('functions.', ''), ctx);
             const finalHandler = attr.modifiers && attr.modifiers.length > 0
                 ? (0, event_modifiers_1.generateModifierWrapper)(attr.modifiers, handler)
                 : handler;

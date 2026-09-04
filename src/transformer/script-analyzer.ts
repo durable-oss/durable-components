@@ -246,14 +246,28 @@ function analyzeFunctionDeclaration(node: any, analysis: ScriptAnalysis, source:
   const name = node.id?.name;
   if (!name) return;
 
-  const params = node.params.map((param: any) => getIdentifierName(param));
+  const params = node.params.map((param: any) => getParamSource(param, source));
   const body = getExpressionSource(node.body, source);
 
   analysis.functions.push({
     name,
     params,
-    body
+    body,
+    async: node.async === true
   });
+}
+
+/**
+ * Get the source text for a function parameter, preserving defaults and
+ * destructuring patterns (falls back to the identifier name).
+ */
+function getParamSource(param: any, source: string): string {
+  if (!param || typeof param !== 'object') return 'unknown';
+  if (param.type === 'Identifier') {
+    return getIdentifierName(param);
+  }
+  const src = getExpressionSource(param, source);
+  return src || getIdentifierName(param);
 }
 
 /**

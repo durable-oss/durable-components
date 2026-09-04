@@ -67,6 +67,7 @@ export interface FunctionDefinition {
     name: string;
     params?: string[];
     body: string;
+    async?: boolean;
 }
 /**
  * Snippet Definition (template snippets that can be passed as props)

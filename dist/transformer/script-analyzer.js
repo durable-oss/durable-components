@@ -192,13 +192,27 @@ function analyzeFunctionDeclaration(node, analysis, source) {
     const name = node.id?.name;
     if (!name)
         return;
-    const params = node.params.map((param) => getIdentifierName(param));
+    const params = node.params.map((param) => getParamSource(param, source));
     const body = getExpressionSource(node.body, source);
     analysis.functions.push({
         name,
         params,
-        body
+        body,
+        async: node.async === true
     });
+}
+/**
+ * Get the source text for a function parameter, preserving defaults and
+ * destructuring patterns (falls back to the identifier name).
+ */
+function getParamSource(param, source) {
+    if (!param || typeof param !== 'object')
+        return 'unknown';
+    if (param.type === 'Identifier') {
+        return getIdentifierName(param);
+    }
+    const src = getExpressionSource(param, source);
+    return src || getIdentifierName(param);
 }
 /**
  * Extract dependencies from an AST node

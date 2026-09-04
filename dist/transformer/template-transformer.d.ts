@@ -21,6 +21,12 @@ export declare function transformTemplate(nodes: TemplateASTNode[]): {
     snippets: SnippetDefinition[];
 };
 /**
+ * Determine whether an expression AST is an inline function (arrow or
+ * function expression), unwrapping Acorn's Program/ExpressionStatement/Chain
+ * wrappers first.
+ */
+export declare function isFunctionExpression(node: any): boolean;
+/**
  * Extract expression string from AST node
  */
 export declare function extractExpression(node: any): string;

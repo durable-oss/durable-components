@@ -215,8 +215,9 @@ function generateFunctionDeclarations(ir: DurableComponentIR): string {
 
     // Handle block vs expression body
     const functionBody = body.startsWith('{') ? body : `{\n${indent(body)}\n}`;
+    const asyncPrefix = func.async ? 'async ' : '';
 
-    return `function ${func.name}(${params}) ${functionBody}`;
+    return `${asyncPrefix}function ${func.name}(${params}) ${functionBody}`;
   });
 
   return declarations.join('\n\n');
@@ -279,10 +280,7 @@ function generateElement(node: any, depth: number): string {
 
   // Handle bindings (e.g., class bindings)
   for (const [key, value] of Object.entries(bindings)) {
-    let valueStr = transformExpression(String(value));
-    // Replace class prop reference with className
-    valueStr = valueStr.replace(/\bclass\b/g, 'className');
-    attrs.push(`${key}=${valueStr}`);
+    attrs.push(formatBindingAttr(key, String(value)));
   }
 
   // Handle attributes (events, bindings, etc.)
@@ -342,14 +340,31 @@ function generateElement(node: any, depth: number): string {
  * Generate if block
  */
 function generateIf(node: any, depth: number): string {
-  const condition = transformExpression(node.condition);
+  return `{#if ${transformExpression(node.condition)}}\n${generateIfBranches(node, depth)}\n{/if}`;
+}
+
+/**
+ * Render the consequent and the else / else-if chain for an {#if} node,
+ * WITHOUT the outer `{#if cond}` / `{/if}`. An `{:else if}` in the source is
+ * stored as an alternate containing a single nested IfNode; we collapse that
+ * back into native Svelte `{:else if}` rather than nesting a fresh `{#if}`
+ * inside an `{:else}`.
+ */
+function generateIfBranches(node: any, depth: number): string {
   const consequent = node.consequent
     .map((child: any) => generateTemplate(child, depth + 1))
     .filter(Boolean)
     .join('\n');
 
-  if (!node.alternate) {
-    return `{#if ${condition}}\n${indent(consequent)}\n{/if}`;
+  if (!node.alternate || node.alternate.length === 0) {
+    return indent(consequent);
+  }
+
+  // Collapse `{:else}{#if}` into `{:else if}` when the else branch is exactly
+  // one IfNode (the shape produced by parsing `{:else if}`).
+  if (node.alternate.length === 1 && node.alternate[0].type === 'if') {
+    const elseIf = node.alternate[0];
+    return `${indent(consequent)}\n{:else if ${transformExpression(elseIf.condition)}}\n${generateIfBranches(elseIf, depth)}`;
   }
 
   const alternate = node.alternate
@@ -357,7 +372,7 @@ function generateIf(node: any, depth: number): string {
     .filter(Boolean)
     .join('\n');
 
-  return `{#if ${condition}}\n${indent(consequent)}\n{:else}\n${indent(alternate)}\n{/if}`;
+  return `${indent(consequent)}\n{:else}\n${indent(alternate)}`;
 }
 
 /**
@@ -420,6 +435,30 @@ function generateRender(node: any): string {
 }
 
 /**
+ * Format an element binding as a Svelte attribute.
+ *
+ * The IR stores a static value as a quoted string ("foo") and a dynamic value
+ * as a bare expression (snap.id) or a template literal (`base ${cond}`). Svelte
+ * needs static values as `key="foo"` and dynamic ones wrapped in braces:
+ * `key={expr}`. Emitting a bare expression without braces produces invalid
+ * Svelte, which is the unquoted-attribute bug.
+ */
+function formatBindingAttr(key: string, rawValue: string): string {
+  const isStaticString =
+    (rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+    (rawValue.startsWith("'") && rawValue.endsWith("'"));
+
+  if (isStaticString) {
+    // Keep the original quoting for a plain static attribute.
+    return `${key}=${rawValue}`;
+  }
+
+  let valueStr = transformExpression(rawValue);
+  valueStr = valueStr.replace(/\bclass\b/g, 'className');
+  return `${key}={${valueStr}}`;
+}
+
+/**
  * Transform IR expression to Svelte expression
  * Remove IR prefixes (state., props., derived., functions.)
  */
@@ -454,9 +493,7 @@ function generateDceElement(node: any, depth: number): string {
 
   // Handle bindings
   for (const [key, value] of Object.entries(bindings)) {
-    let valueStr = transformExpression(String(value));
-    valueStr = valueStr.replace(/\bclass\b/g, 'className');
-    attrs.push(`${key}=${valueStr}`);
+    attrs.push(formatBindingAttr(key, String(value)));
   }
 
   // Handle attributes
