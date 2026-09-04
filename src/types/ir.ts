@@ -114,7 +114,7 @@ export interface RefDefinition {
 /**
  * Template Node Types
  */
-export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug' | 'comment' | 'dce-element' | 'dce-window' | 'dce-boundary' | 'dce-head';
+export type TemplateNodeType = 'element' | 'text' | 'expression' | 'if' | 'each' | 'key' | 'slot' | 'render' | 'const' | 'html' | 'debug' | 'comment' | 'dce-element' | 'dce-window' | 'dce-boundary' | 'dce-head' | 'dce-behavior';
 
 /**
  * Base Template Node (unist-compatible)
@@ -273,6 +273,21 @@ export interface DceBoundaryNode extends BaseTemplateNode, Parent {
 }
 
 /**
+ * DCE Behavior Node
+ *
+ * The placeholder a behavior primitive (`<dce:escape>`, `<dce:scroll-lock>`,
+ * `<dce:timer>`, `<dce:focus-trap>`) leaves in the template. It renders
+ * nothing — the primitive's real output is a `LifecycleEffect` on the
+ * component — but keeping a node here preserves template structure and gives
+ * diagnostics something to point at.
+ */
+export interface DceBehaviorNode extends BaseTemplateNode {
+  type: 'dce-behavior';
+  /** Which primitive this came from, e.g. 'escape'. */
+  behavior: string;
+}
+
+/**
  * DCE Head Node (document head like <dce:head>)
  */
 export interface DceHeadNode extends BaseTemplateNode, Parent {
@@ -299,7 +314,8 @@ export type TemplateNode =
   | DceElementNode
   | DceWindowNode
   | DceBoundaryNode
-  | DceHeadNode;
+  | DceHeadNode
+  | DceBehaviorNode;
 
 /**
  * Complete Durable Component IR

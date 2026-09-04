@@ -116,7 +116,7 @@ export function transform(ast: DurableComponentAST): DurableComponentIR {
       throw new Error('transform: ast.template.children must be an array');
     }
 
-    const { template: transformedTemplate, snippets } = transformTemplate(ast.template.children);
+    const { template: transformedTemplate, snippets, lifecycle } = transformTemplate(ast.template.children);
 
     // Defensive: validate transformed template
     if (!transformedTemplate || typeof transformedTemplate !== 'object') {
@@ -128,6 +128,9 @@ export function transform(ast: DurableComponentAST): DurableComponentIR {
 
     ir.template = transformedTemplate;
     ir.snippets = snippets;
+    if (lifecycle.length > 0) {
+      ir.lifecycle = lifecycle;
+    }
 
     // Extract refs from template (bind:this directives)
     ir.refs = extractRefsFromTemplate(ir.template);
