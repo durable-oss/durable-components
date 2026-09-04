@@ -90,24 +90,32 @@ export function parseExpression(expr: string): any {
     // Strip TypeScript type annotations before parsing
     const cleanedExpr = stripTypeAnnotations(trimmedExpr);
 
-    // Try to parse as-is first
     let ast;
-    try {
-      ast = acornParse(cleanedExpr, {
-        ecmaVersion: 2022,
-        sourceType: 'module'
-      });
-    } catch (firstError) {
-      // If it starts with { and ends with }, it might be an object literal
-      // Try wrapping in parentheses to make it a valid expression
-      if (cleanedExpr.startsWith('{') && cleanedExpr.endsWith('}')) {
+
+    // A leading `{` is ambiguous in statement position: `{ color: 'red' }`
+    // parses cleanly as a block containing a labeled statement, so the bare
+    // parse succeeds with the wrong AST and no error to fall back from.
+    // Parenthesizing first forces expression position; if that fails the value
+    // really was a block (or invalid), so fall through to the plain parse.
+    const looksLikeObjectLiteral =
+      cleanedExpr.startsWith('{') && cleanedExpr.endsWith('}');
+
+    if (looksLikeObjectLiteral) {
+      try {
         ast = acornParse(`(${cleanedExpr})`, {
           ecmaVersion: 2022,
           sourceType: 'module'
         });
-      } else {
-        throw firstError;
+      } catch {
+        // Not an object literal after all; the plain parse below decides.
       }
+    }
+
+    if (!ast) {
+      ast = acornParse(cleanedExpr, {
+        ecmaVersion: 2022,
+        sourceType: 'module'
+      });
     }
 
     if (!ast || typeof ast !== 'object') {
