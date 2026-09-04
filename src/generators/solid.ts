@@ -10,6 +10,7 @@ import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
 import { generateModifierWrapper } from '../utils/event-modifiers';
 import { arrowBody } from '../utils/arrow-body';
+import { returnsTeardown } from '../utils/effect-cleanup';
 
 interface GeneratorContext {
   /** Track used Solid primitives for imports */
@@ -282,11 +283,23 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
  */
 function generateEffectDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
   const declarations = ir.effects.map((effect) => {
-    const expr = transformExpression(effect.expression, ir, ctx);
+    // Assignments to state have to become setter calls here too, not just in
+    // function bodies — an effect that writes state is ordinary DSL code.
+    const expr = applySetterTransforms(effect.expression, ir, ctx);
     // SolidJS doesn't need dependency arrays - it auto-tracks
 
     // Handle block vs expression
     const effectBody = expr.startsWith('{') ? expr : `{\n${indent(expr)}\n}`;
+
+    // Solid discards a value returned from createEffect, so a teardown has to
+    // be registered with onCleanup instead. Without this every listener, timer,
+    // and observer an effect sets up leaks on unmount.
+    if (returnsTeardown(effect.expression)) {
+      ctx.usedPrimitives.add('onCleanup');
+      return `createEffect(() => {\n${indent(
+        `const __cleanup = (() => ${effectBody})();\nif (typeof __cleanup === 'function') onCleanup(__cleanup);`
+      )}\n});`;
+    }
 
     return `createEffect(() => ${effectBody});`;
   });
@@ -302,71 +315,87 @@ function generateEffectDeclarations(ir: DurableComponentIR, ctx: GeneratorContex
 const COMPOUND_ASSIGNMENT_OPERATORS = '>>>|\\*\\*|<<|>>|&&|\\|\\||\\?\\?|[+\\-*/%&|^]';
 
 /**
+ * Rewrite assignments to state as signal setter calls.
+ *
+ * Solid signals are read through a getter and written through a setter, so
+ * `count = 1` has to become `setCount(1)`. This was applied only to function
+ * bodies, so an assignment inside an effect — including one nested in a
+ * callback the effect registers — survived to the accessor pass and came out
+ * as `count() = 1`, which is not a valid assignment target.
+ */
+function applySetterTransforms(
+  body: string,
+  ir: DurableComponentIR,
+  ctx: GeneratorContext
+): string {
+  for (const state of ir.state) {
+    const getter = state.name;
+    const setter = ctx.stateSetters.get(state.name);
+    if (setter) {
+      // Replace count++ with setCount(count() + 1)
+      body = body.replace(
+        new RegExp(`\\b${state.name}\\+\\+`, 'g'),
+        `${setter}(${getter}() + 1)`
+      );
+      body = body.replace(
+        new RegExp(`\\b${state.name}--`, 'g'),
+        `${setter}(${getter}() - 1)`
+      );
+      // Replace `count += value` with `setCount(count() + value)`. This has to
+      // run before the plain-assignment rule below, which would otherwise not
+      // match at all: the operator would survive to the accessor pass and come
+      // out as `count() += value`, which is not a valid assignment target.
+      body = body.replace(
+        new RegExp(`\\b${state.name}\\s*(${COMPOUND_ASSIGNMENT_OPERATORS})=\\s*([^;]+);`, 'g'),
+        (_match, op, value) => {
+          let transformedValue = String(value).trim();
+          for (const s2 of ir.state) {
+            transformedValue = transformedValue.replace(
+              new RegExp(`\\b${s2.name}(?!\\()\\b`, 'g'),
+              `${s2.name}()`
+            );
+          }
+          return `${setter}(${getter}() ${op} ${transformedValue});`;
+        }
+      );
+      // Replace count = value with setCount(value)
+      // Need to be careful to handle expressions that might contain state values
+      body = body.replace(
+        new RegExp(`\\b${state.name}\\s*=\\s*([^=].+?);`, 'g'),
+        (match, value) => {
+          // Transform state references in the value to use getters
+          let transformedValue = value;
+          for (const s of ir.state) {
+            transformedValue = transformedValue.replace(
+              new RegExp(`\\b${s.name}\\b`, 'g'),
+              `${s.name}()`
+            );
+          }
+          return `${setter}(${transformedValue});`;
+        }
+      );
+    }
+  }
+
+  // Transform remaining state references to use signal getters
+  for (const state of ir.state) {
+    // Only replace if it's not already followed by () or being used in a setter
+    body = body.replace(
+      new RegExp(`\\b${state.name}(?!\\()\\b`, 'g'),
+      `${state.name}()`
+    );
+  }
+
+  return body;
+}
+
+/**
  * Generate function declarations
  */
 function generateFunctionDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
   const declarations = ir.functions.map((func) => {
     const params = func.params?.join(', ') || '';
-    let body = func.body;
-
-    // Transform state updates to use setters
-    for (const state of ir.state) {
-      const getter = state.name;
-      const setter = ctx.stateSetters.get(state.name);
-      if (setter) {
-        // Replace count++ with setCount(count() + 1)
-        body = body.replace(
-          new RegExp(`\\b${state.name}\\+\\+`, 'g'),
-          `${setter}(${getter}() + 1)`
-        );
-        body = body.replace(
-          new RegExp(`\\b${state.name}--`, 'g'),
-          `${setter}(${getter}() - 1)`
-        );
-        // Replace `count += value` with `setCount(count() + value)`. This has to
-        // run before the plain-assignment rule below, which would otherwise not
-        // match at all: the operator would survive to the accessor pass and come
-        // out as `count() += value`, which is not a valid assignment target.
-        body = body.replace(
-          new RegExp(`\\b${state.name}\\s*(${COMPOUND_ASSIGNMENT_OPERATORS})=\\s*([^;]+);`, 'g'),
-          (_match, op, value) => {
-            let transformedValue = String(value).trim();
-            for (const s2 of ir.state) {
-              transformedValue = transformedValue.replace(
-                new RegExp(`\\b${s2.name}(?!\\()\\b`, 'g'),
-                `${s2.name}()`
-              );
-            }
-            return `${setter}(${getter}() ${op} ${transformedValue});`;
-          }
-        );
-        // Replace count = value with setCount(value)
-        // Need to be careful to handle expressions that might contain state values
-        body = body.replace(
-          new RegExp(`\\b${state.name}\\s*=\\s*([^=].+?);`, 'g'),
-          (match, value) => {
-            // Transform state references in the value to use getters
-            let transformedValue = value;
-            for (const s of ir.state) {
-              transformedValue = transformedValue.replace(
-                new RegExp(`\\b${s.name}\\b`, 'g'),
-                `${s.name}()`
-              );
-            }
-            return `${setter}(${transformedValue});`;
-          }
-        );
-      }
-    }
-
-    // Transform remaining state references to use signal getters
-    for (const state of ir.state) {
-      // Only replace if it's not already followed by () or being used in a setter
-      body = body.replace(
-        new RegExp(`\\b${state.name}(?!\\()\\b`, 'g'),
-        `${state.name}()`
-      );
-    }
+    const body = applySetterTransforms(func.body, ir, ctx);
 
     // Handle block vs expression body
     const functionBody = body.startsWith('{') ? body : `{\n${indent(body)}\n}`;

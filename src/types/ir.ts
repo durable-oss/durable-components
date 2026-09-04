@@ -69,6 +69,23 @@ export interface EffectDefinition {
 }
 
 /**
+ * Lifecycle Effect
+ *
+ * A side effect that runs on mount and tears down on unmount. Unlike an
+ * `EffectDefinition`, which re-runs when its dependencies change, this models
+ * setup/teardown pairs — event listeners, timers, DOM mutations — that the
+ * `dce:*` behavior primitives compile to.
+ */
+export interface LifecycleEffect {
+  /** Statements to run on mount. */
+  setup: string;
+  /** Optional expression evaluating to a teardown function. */
+  teardown?: string;
+  /** Which primitive produced this, for diagnostics. */
+  source?: string;
+}
+
+/**
  * Function Definition
  */
 export interface FunctionDefinition {
@@ -322,6 +339,9 @@ export interface DurableComponentIR extends Node {
 
   /** Side effects */
   effects: EffectDefinition[];
+
+  /** Mount/unmount effects produced by the dce:* behavior primitives */
+  lifecycle?: LifecycleEffect[];
 
   /** Element references (bind:this) */
   refs: RefDefinition[];

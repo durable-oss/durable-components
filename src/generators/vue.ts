@@ -10,6 +10,7 @@ import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
 import { arrowBody } from '../utils/arrow-body';
 import { generatePropsDeclaration, isTypeScript } from './vue-props';
+import { returnsTeardown } from '../utils/effect-cleanup';
 
 interface GeneratorContext {
   /** Track used composables for imports */
@@ -305,6 +306,15 @@ function generateEffectDeclarations(ir: DurableComponentIR, ctx: GeneratorContex
 
     // Handle block vs expression
     const effectBody = expr.startsWith('{') ? expr : `{\n${indent(expr)}\n}`;
+
+    // Vue discards a value returned from watchEffect; a teardown has to go
+    // through the onCleanup callback it passes in. Without this every listener,
+    // timer, and observer an effect sets up leaks when the component unmounts.
+    if (returnsTeardown(effect.expression)) {
+      return `watchEffect((onCleanup) => {\n${indent(
+        `const __cleanup = (() => ${effectBody})();\nif (typeof __cleanup === 'function') onCleanup(__cleanup);`
+      )}\n});`;
+    }
 
     return `watchEffect(() => ${effectBody});`;
   });
