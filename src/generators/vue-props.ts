@@ -94,6 +94,11 @@ function runtimePropsDeclaration(ir: DurableComponentIR): string {
     const needsFactory = /^\s*[[{]/.test(prop.defaultValue);
     const value = needsFactory ? `() => (${prop.defaultValue})` : prop.defaultValue;
 
+    // `null` means "any type", so the descriptor only needs the default.
+    if (type === 'null') {
+      return `  ${prop.name}: { default: ${value} }`;
+    }
+
     return `  ${prop.name}: { type: ${type}, default: ${value} }`;
   });
 

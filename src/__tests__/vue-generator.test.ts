@@ -124,10 +124,12 @@ describe('Vue 3 Generator', () => {
         target: 'vue'
       });
 
-      expect(result.js.code).toContain('withDefaults');
+      // A JavaScript source gets the runtime defineProps form; withDefaults
+      // is type-only and would need <script setup lang="ts">.
       expect(result.js.code).toContain('defineProps');
-      expect(result.js.code).toContain("name: 'World'");
-      expect(result.js.code).toContain('count: 0');
+      expect(result.js.code).not.toContain('withDefaults');
+      expect(result.js.code).toContain("name: { default: 'World' }");
+      expect(result.js.code).toContain('count: { default: 0 }');
     });
 
     it('should compile a component with typed props', () => {
@@ -146,7 +148,7 @@ describe('Vue 3 Generator', () => {
         target: 'vue'
       });
 
-      expect(result.js.code).toContain('withDefaults');
+      expect(result.js.code).toContain('defineProps');
       expect(result.js.code).toContain('{{ items.length }}');
     });
 
@@ -167,7 +169,7 @@ describe('Vue 3 Generator', () => {
         target: 'vue'
       });
 
-      expect(result.js.code).toContain('withDefaults');
+      expect(result.js.code).toContain('defineProps');
       expect(result.js.code).toContain('const count = ref(props.initialCount);');
     });
   });
@@ -898,7 +900,7 @@ describe('Vue 3 Generator', () => {
         target: 'vue'
       });
 
-      expect(result.js.code).toContain('withDefaults');
+      expect(result.js.code).toContain('defineProps');
       expect(result.js.code).toContain('const todos = ref(props.initialTodos);');
       expect(result.js.code).toContain('const filteredTodos = computed(');
       expect(result.js.code).toContain('const addTodo = ');
@@ -965,7 +967,7 @@ describe('Vue 3 Generator', () => {
         target: 'vue'
       });
 
-      expect(result.js.code).toContain('withDefaults');
+      expect(result.js.code).toContain('defineProps');
       expect(result.js.code).toContain('const count = ref(props.initialCount);');
       expect(result.js.code).toContain('const doubled = computed(() => count.value * 2);');
       expect(result.js.code).toContain('const history = ref([]);');
