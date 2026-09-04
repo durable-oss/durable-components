@@ -490,7 +490,7 @@ function generateElement(node: any, ctx: GeneratorContext, depth: number): strin
       attrs.push(vueDynamicAttr(':class', `{ '${className}': ${condition} }`));
     } else {
       // Regular attribute
-      attrs.push(`${attr.name}="${attr.value}"`);
+      attrs.push(vueAttr(attr.name, attr.value, ctx));
     }
   }
 
@@ -780,6 +780,26 @@ function transformTemplateExpression(expr: string, ctx: GeneratorContext): strin
 }
 
 /**
+ * Emit a regular (non-directive) attribute as a Vue template attribute.
+ *
+ * A quoted literal becomes a plain static attribute; anything else is an
+ * expression and needs the `:` binding form, or Vue renders the source text
+ * verbatim (a template literal was emitted as `style="`width: ${w}px`"`).
+ */
+function vueAttr(name: string, rawValue: string, ctx: GeneratorContext): string {
+  const value = String(rawValue ?? '');
+  const isStaticString =
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"));
+
+  if (isStaticString) {
+    return `${name}="${value.slice(1, -1)}"`;
+  }
+
+  return vueDynamicAttr(`:${name}`, transformTemplateExpression(value, ctx));
+}
+
+/**
  * Generate dce:element (dynamic component)
  */
 function generateDceElement(node: any, ctx: GeneratorContext, depth: number): string {
@@ -838,7 +858,7 @@ function generateDceElement(node: any, ctx: GeneratorContext, depth: number): st
       const condition = transformTemplateExpression(attr.value, ctx);
       attrs.push(vueDynamicAttr(':class', `{ '${className}': ${condition} }`));
     } else {
-      attrs.push(`${attr.name}="${attr.value}"`);
+      attrs.push(vueAttr(attr.name, attr.value, ctx));
     }
   }
 

@@ -471,6 +471,11 @@ function generateElementJSX(
     } else if (attr.name.startsWith('class:')) {
       // Class directive: class:active={isActive}
       // For now, skip these (would need className logic)
+    } else {
+      // Regular attribute. Ordinary elements route these through `bindings`,
+      // but dce:* elements put them here, so without this branch they were
+      // silently dropped.
+      props.push(solidAttrProp(attr.name, attr.value, ctx));
     }
   }
 
@@ -816,6 +821,23 @@ function transformExpression(expr: string, ir: DurableComponentIR, ctx: Generato
 }
 
 /**
+ * Emit a regular (non-directive) attribute as a Solid JSX prop.
+ *
+ * A quoted literal stays a JSX string attribute; anything else is an
+ * expression and goes in braces, with IR prefixes and signal accessors applied.
+ */
+function solidAttrProp(name: string, rawValue: string, ctx: GeneratorContext): string {
+  const attrName = name === 'class' ? 'className' : name;
+  const value = String(rawValue ?? '');
+
+  if (/^["'][\s\S]*["']$/.test(value)) {
+    return `${attrName}=${value}`;
+  }
+
+  return `${attrName}={${transformExpression(value, {} as any, ctx)}}`;
+}
+
+/**
  * Generate dce:element JSX (dynamic component)
  */
 function generateDceElementJSX(
@@ -863,6 +885,8 @@ function generateDceElementJSX(
       if (setter && propName === 'value') {
         props.push(`onInput={(e) => ${setter}(e.currentTarget.value)}`);
       }
+    } else {
+      props.push(solidAttrProp(attr.name, attr.value, ctx));
     }
   }
 

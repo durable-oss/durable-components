@@ -306,7 +306,7 @@ function generateElement(node: any, depth: number): string {
       attrs.push(`${attr.name}={${condition}}`);
     } else {
       // Regular attribute
-      attrs.push(`${attr.name}="${attr.value}"`);
+      attrs.push(formatBindingAttr(attr.name, String(attr.value ?? '')));
     }
   }
 
@@ -512,7 +512,7 @@ function generateDceElement(node: any, depth: number): string {
       const condition = transformExpression(attr.value);
       attrs.push(`${attr.name}={${condition}}`);
     } else {
-      attrs.push(`${attr.name}="${attr.value}"`);
+      attrs.push(formatBindingAttr(attr.name, String(attr.value ?? '')));
     }
   }
 

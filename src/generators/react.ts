@@ -197,6 +197,18 @@ function generateComponent(ir: DurableComponentIR, ctx: GeneratorContext): strin
 
   // Generate JSX return — wrap in fragment if root is not an element
   const jsx = generateJSX(ir.template, ctx);
+
+  // `<dce:element>` tag aliases are discovered while generating the JSX above,
+  // so their declarations are appended once that is done — still ahead of the
+  // return statement pushed below.
+  if (ctx.dynamicTags.size > 0) {
+    body.push(
+      Array.from(ctx.dynamicTags)
+        .map(([expression, alias]) => `const ${alias} = ${expression};`)
+        .join('\n')
+    );
+  }
+
   const needsFragment = !jsx.trimStart().startsWith('<');
   const returnJsx = needsFragment ? `<>\n${indent(jsx)}\n</>` : jsx;
   body.push(`return (\n${indent(returnJsx)}\n);`);
@@ -826,6 +838,23 @@ function transformExpression(expr: string, ir: DurableComponentIR): string {
 }
 
 /**
+ * Name a `<dce:element>` tag expression so it can be used as a JSX tag.
+ *
+ * JSX resolves a lowercase tag to a host element, so emitting the expression
+ * directly turned `<dce:element this={tag}>` into a literal `<tag>` element.
+ * Binding the expression to a capitalized local first is the idiomatic React
+ * form and works for any expression, not just bare identifiers.
+ */
+function dynamicTagAlias(expression: string, ctx: GeneratorContext): string {
+  const existing = ctx.dynamicTags.get(expression);
+  if (existing) return existing;
+
+  const alias = `DceTag${ctx.dynamicTags.size + 1}`;
+  ctx.dynamicTags.set(expression, alias);
+  return alias;
+}
+
+/**
  * Generate dce:element JSX (dynamic element tag)
  */
 function generateDceElementJSX(
@@ -835,8 +864,9 @@ function generateDceElementJSX(
 ): string {
   const { tagExpression, attributes = [], bindings = {}, children = [] } = node;
 
-  // Transform the tag expression
-  const Tag = transformExpression(tagExpression, {} as any);
+  // Transform the tag expression, then bind it to a capitalized local so JSX
+  // treats it as a component rather than a host element.
+  const Tag = dynamicTagAlias(transformExpression(tagExpression, {} as any), ctx);
 
   // Collect all props (same as regular element)
   const props: string[] = [];
