@@ -338,7 +338,7 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
       return generateEachJSX(node, ctx, depth);
 
     case 'slot':
-      return '{props.children}';
+      return generateSlotJSX(node, ctx, depth);
 
     case 'render':
       return generateRenderJSX(node, ctx);
@@ -372,6 +372,13 @@ function generateElementJSX(
   depth: number
 ): string {
   const { name, attributes = [], bindings = {}, children = [] } = node;
+
+  // The template parser has no dedicated Slot AST node, so `<slot />` and
+  // `<slot name="header">` arrive here as ordinary elements. A literal
+  // `<slot>` tag is not valid JSX, so route it through the slot generator.
+  if (name === 'slot') {
+    return generateSlotJSX(slotNodeFromElement(node), ctx, depth);
+  }
 
   // Collect all props
   const props: string[] = [];
@@ -470,6 +477,70 @@ function generateElementJSX(
   }
 
   return `<${name}${propsStr}>\n${indent(childrenJSX)}\n</${name}>`;
+}
+
+/**
+ * Read the slot name off an element-shaped `<slot>` node.
+ *
+ * The name can arrive as a static attribute (`<slot name="header" />`) or, for
+ * a dynamic name, as a binding. Only a static string identifies a named slot;
+ * anything else falls back to the default slot.
+ */
+function slotNodeFromElement(node: any): { type: 'slot'; name?: string; fallback: any[] } {
+  const attrs = node.attributes || [];
+  const nameAttr = attrs.find((attr: any) => attr.name === 'name');
+  const raw = nameAttr ? String(nameAttr.value) : undefined;
+  const name = raw ? raw.replace(/^["']|["']$/g, '') : undefined;
+
+  return {
+    type: 'slot',
+    name: name || undefined,
+    fallback: node.children || []
+  };
+}
+
+/**
+ * Generate JSX for a slot.
+ *
+ * React has no slot element. The default slot is `props.children`; a named slot
+ * is passed as a prop of that name. Fallback content renders when the consumer
+ * supplies nothing, which is `??` rather than `||` so that a legitimately falsy
+ * child (0, '') is still rendered.
+ */
+function generateSlotJSX(node: any, ctx: GeneratorContext, depth: number): string {
+  const source = node.name ? `props[${JSON.stringify(node.name)}]` : 'props.children';
+  const fallback = node.fallback || node.children || [];
+
+  const fallbackJSX = fallback
+    .map((child: any) => generateSlotFallbackJSX(child, ctx, depth + 1))
+    .filter(Boolean);
+
+  if (fallbackJSX.length === 0) {
+    return `{${source}}`;
+  }
+
+  return `{${source} ?? ${wrapJsxChildren(fallbackJSX)}}`;
+}
+
+/**
+ * Generate one fallback child in expression position.
+ *
+ * Fallback content sits to the right of `??`, inside a JSX expression container
+ * rather than in element-child position. Bare text is a string literal there,
+ * and an `{expr}` child has to shed its braces; everything else is already a
+ * valid expression.
+ */
+function generateSlotFallbackJSX(node: any, ctx: GeneratorContext, depth: number): string {
+  if (node.type === 'text') {
+    const content = node.content.trim();
+    return content ? JSON.stringify(content) : '';
+  }
+
+  if (node.type === 'expression') {
+    return transformExpression(node.expression, {} as any);
+  }
+
+  return generateJSX(node, ctx, depth);
 }
 
 /**
