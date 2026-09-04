@@ -9,6 +9,7 @@ import type { DurableComponentIR, TemplateNode } from '../types/ir';
 import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
 import { arrowBody } from '../utils/arrow-body';
+import { generatePropsDeclaration, isTypeScript } from './vue-props';
 
 interface GeneratorContext {
   /** Track used composables for imports */
@@ -80,7 +81,10 @@ export function generateVue(ir: DurableComponentIR, options: { browserSafe?: boo
     const imports = joinStatements(vueImports, externalImports);
     const fullScript = joinStatements(imports, types, scriptContent);
 
-    const scriptLang = ir.lang === 'ts' || ir.lang === 'typescript' ? ' lang="ts"' : '';
+    // The script has to be marked as TypeScript whenever it actually contains
+    // any: a TS source, or emitted type declarations. Props no longer force it
+    // — a JS component gets the runtime `defineProps` form instead.
+    const scriptLang = isTypeScript(ir) || types.trim() ? ' lang="ts"' : '';
     parts.push(`<script setup${scriptLang}>\n${indent(fullScript)}\n</script>`);
   }
 
@@ -254,36 +258,6 @@ function generateScriptSetup(ir: DurableComponentIR, ctx: GeneratorContext): str
   }
 
   return statements.filter(Boolean).join('\n\n');
-}
-
-/**
- * Generate defineProps() declaration
- */
-function generatePropsDeclaration(ir: DurableComponentIR): string {
-  const propsWithDefaults = ir.props.filter(p => p.defaultValue);
-  const propsWithoutDefaults = ir.props.filter(p => !p.defaultValue);
-
-  if (propsWithDefaults.length === 0) {
-    // Simple defineProps without defaults
-    const propsList = ir.props.map(prop => {
-      const type = prop.type || 'any';
-      return `  ${prop.name}: ${type}`;
-    });
-    return `const props = defineProps({\n${propsList.join(',\n')}\n});`;
-  }
-
-  // Use withDefaults for props with default values
-  const propsInterface = ir.props.map(prop => {
-    const optional = prop.defaultValue ? '?' : '';
-    const type = prop.type || 'any';
-    return `  ${prop.name}${optional}: ${type};`;
-  });
-
-  const defaults = propsWithDefaults.map(prop => {
-    return `  ${prop.name}: ${prop.defaultValue}`;
-  });
-
-  return `const props = withDefaults(defineProps<{\n${propsInterface.join('\n')}\n}>(), {\n${defaults.join(',\n')}\n});`;
 }
 
 /**

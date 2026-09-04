@@ -54,7 +54,16 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
 }
 
 /**
- * Generate Solid imports based on used primitives
+ * Components Solid exports from `solid-js/web` rather than the package root.
+ * Importing these from `solid-js` yields undefined at runtime.
+ */
+const WEB_ONLY_PRIMITIVES = new Set(['Dynamic', 'Portal']);
+
+/**
+ * Generate Solid imports based on used primitives.
+ *
+ * Reactive primitives and control-flow components come from `solid-js`; the
+ * DOM-specific components in `WEB_ONLY_PRIMITIVES` come from `solid-js/web`.
  */
 function generateSolidImports(ctx: GeneratorContext): string {
   if (ctx.usedPrimitives.size === 0) {
@@ -62,7 +71,18 @@ function generateSolidImports(ctx: GeneratorContext): string {
   }
 
   const primitives = Array.from(ctx.usedPrimitives).sort();
-  return `import { ${primitives.join(', ')} } from 'solid-js';`;
+  const core = primitives.filter((name) => !WEB_ONLY_PRIMITIVES.has(name));
+  const web = primitives.filter((name) => WEB_ONLY_PRIMITIVES.has(name));
+
+  const imports: string[] = [];
+  if (core.length > 0) {
+    imports.push(`import { ${core.join(', ')} } from 'solid-js';`);
+  }
+  if (web.length > 0) {
+    imports.push(`import { ${web.join(', ')} } from 'solid-js/web';`);
+  }
+
+  return imports.join('\n');
 }
 
 /**
