@@ -9,6 +9,7 @@ import type { DurableComponentIR, TemplateNode } from '../types/ir';
 import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
 import { generateModifierWrapper } from '../utils/event-modifiers';
+import { arrowBody } from '../utils/arrow-body';
 
 interface GeneratorContext {
   /** Track used Solid primitives for imports */
@@ -250,7 +251,7 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
     const expr = transformExpression(derived.expression, ir, ctx);
     // SolidJS doesn't need dependency arrays - it auto-tracks
 
-    return `const ${derived.name} = createMemo(() => ${expr});`;
+    return `const ${derived.name} = createMemo(() => ${arrowBody(expr)});`;
   });
 
   return declarations.join('\n');

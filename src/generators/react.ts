@@ -9,12 +9,20 @@ import type { DurableComponentIR, TemplateNode } from '../types/ir';
 import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements, objectLiteral } from '../utils/code-gen';
 import { generateModifierWrapper } from '../utils/event-modifiers';
+import { arrowBody } from '../utils/arrow-body';
+import {
+  STYLE_HELPER_NAME,
+  STYLE_HELPER_SOURCE,
+  parseStaticStyle
+} from '../utils/css-style';
 
 interface GeneratorContext {
   /** Track used hooks for imports */
   usedHooks: Set<string>;
   /** Track state setters for reference */
   stateSetters: Map<string, string>;
+  /** Set when a dynamic `style` prop needs the CSS-string-to-object helper */
+  usesStyleHelper: boolean;
   /** Component name */
   componentName: string;
 }
@@ -26,6 +34,7 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
   const ctx: GeneratorContext = {
     usedHooks: new Set(),
     stateSetters: new Map(),
+    usesStyleHelper: false,
     componentName: ir.name
   };
 
@@ -38,8 +47,19 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
   // Generate React imports
   const reactImports = generateReactImports(ctx);
 
+  // The style helper is only emitted when a dynamic `style` prop needs it;
+  // `ctx.usesStyleHelper` is set while the component body is generated above.
+  const styleHelper = ctx.usesStyleHelper ? STYLE_HELPER_SOURCE : '';
+
   // Combine all parts
-  const code = joinStatements(reactImports, externalImports, types, propsInterface, component);
+  const code = joinStatements(
+    reactImports,
+    externalImports,
+    types,
+    propsInterface,
+    styleHelper,
+    component
+  );
 
   return {
     code
@@ -241,7 +261,7 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
     const expr = transformExpression(derived.expression, ir);
     const deps = derived.dependencies.map((dep) => dep).join(', ');
 
-    return `const ${derived.name} = useMemo(() => ${expr}, [${deps}]);`;
+    return `const ${derived.name} = useMemo(() => ${arrowBody(expr)}, [${deps}]);`;
   });
 
   return declarations.join('\n');
@@ -381,6 +401,42 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
 }
 
 /**
+ * Emit the `style` prop.
+ *
+ * React's style prop is an object, so a CSS declaration string has to be
+ * converted. A static string is converted at compile time; anything dynamic —
+ * a template literal, a variable, a ternary — goes through the runtime helper,
+ * which passes non-string values (an object the author already built) through
+ * unchanged.
+ */
+function styleProp(value: string, ctx: GeneratorContext): string {
+  const trimmed = value.trim();
+
+  const staticString = trimmed.match(/^(["'])([\s\S]*)\1$/);
+  if (staticString) {
+    const parsed = parseStaticStyle(staticString[2]);
+    if (parsed) {
+      return `style={${objectLiteral(
+        Object.fromEntries(
+          Object.entries(parsed).map(([key, cssValue]) => [
+            JSON.stringify(key),
+            JSON.stringify(cssValue)
+          ])
+        )
+      )}}`;
+    }
+  }
+
+  // An object literal is already the shape React wants.
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    return `style={${trimmed}}`;
+  }
+
+  ctx.usesStyleHelper = true;
+  return `style={${STYLE_HELPER_NAME}(${trimmed})}`;
+}
+
+/**
  * Generate element JSX
  */
 function generateElementJSX(
@@ -412,6 +468,8 @@ function generateElementJSX(
       } else {
         props.push(`className={${transformedValue}}`);
       }
+    } else if (key === 'style') {
+      props.push(styleProp(transformedValue, ctx));
     } else {
       // Check if it's a static string (wrapped in quotes)
       if (transformedValue.startsWith('"') && transformedValue.endsWith('"')) {
@@ -460,6 +518,8 @@ function generateElementJSX(
     } else if (attr.name.startsWith('class:')) {
       // Class directive: class:active={isActive}
       // For now, skip these (would need className logic)
+    } else if (attr.name === 'style') {
+      props.push(styleProp(attr.value.replace(/^(state|props|derived)\./, ''), ctx));
     } else {
       // Regular attribute
       const attrName = attr.name === 'class' ? 'className' : attr.name;
@@ -789,6 +849,8 @@ function generateDceElementJSX(
       } else {
         props.push(`className={${transformedValue}}`);
       }
+    } else if (key === 'style') {
+      props.push(styleProp(transformedValue, ctx));
     } else {
       if (transformedValue.startsWith('"') && transformedValue.endsWith('"')) {
         props.push(`${key}=${transformedValue}`);
@@ -815,6 +877,8 @@ function generateDceElementJSX(
       if (setter && propName === 'value') {
         props.push(`onChange={(e) => ${setter}(e.target.value)}`);
       }
+    } else if (attr.name === 'style') {
+      props.push(styleProp(attr.value.replace(/^(state|props|derived)\./, ''), ctx));
     } else {
       const attrName = attr.name === 'class' ? 'className' : attr.name;
       const attrValue = attr.value.replace(/^(state|props|derived)\./, '');

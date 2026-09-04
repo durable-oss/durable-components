@@ -8,6 +8,7 @@
 import type { DurableComponentIR, TemplateNode } from '../types/ir';
 import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
+import { arrowBody } from '../utils/arrow-body';
 
 interface GeneratorContext {
   /** Track used composables for imports */
@@ -315,7 +316,7 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
     const expr = transformExpression(derived.expression, ctx);
     // Vue doesn't need dependency arrays - it auto-tracks
 
-    return `const ${derived.name} = computed(() => ${expr});`;
+    return `const ${derived.name} = computed(() => ${arrowBody(expr)});`;
   });
 
   return declarations.join('\n');
