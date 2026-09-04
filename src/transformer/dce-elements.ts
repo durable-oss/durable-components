@@ -75,10 +75,28 @@ const elementPlugin: DcePlugin = {
 };
 
 const windowPlugin: DcePlugin = {
-  transform(node): DceWindowNode {
+  transform(node, context): DceWindowNode {
+    const attributes = transformDceAttributes(node);
+
+    // Window listeners are mount/unmount effects, not markup. Every generator
+    // previously built the addEventListener strings here and then discarded
+    // them, so <dce:window> emitted nothing on any target.
+    for (const attr of attributes) {
+      if (!attr.name.startsWith('on:')) continue;
+
+      const event = attr.name.slice(3);
+      const handler = attr.value.replace(/^functions\./, '');
+
+      context.lifecycle.push({
+        setup: `window.addEventListener('${event}', ${handler})`,
+        teardown: `window.removeEventListener('${event}', ${handler})`,
+        source: 'window'
+      });
+    }
+
     return {
       type: 'dce-window',
-      attributes: transformDceAttributes(node)
+      attributes
     };
   }
 };

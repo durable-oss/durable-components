@@ -168,3 +168,26 @@ export function behaviorHelperSource(used: Iterable<BehaviorHelper>): string {
     .map((name) => SOURCES[name])
     .join('\n\n');
 }
+
+/**
+ * Which helpers a set of lifecycle effects calls.
+ *
+ * Generators use this to emit only the helper sources actually needed, so a
+ * component using just `<dce:escape>` does not carry the focus-trap code.
+ */
+export function behaviorsUsedBy(
+  lifecycle: ReadonlyArray<{ setup: string; teardown?: string }>
+): Set<BehaviorHelper> {
+  const used = new Set<BehaviorHelper>();
+
+  for (const effect of lifecycle) {
+    const code = `${effect.setup} ${effect.teardown ?? ''}`;
+    for (const [name, identifier] of Object.entries(BEHAVIOR_HELPERS)) {
+      if (code.includes(identifier)) {
+        used.add(name as BehaviorHelper);
+      }
+    }
+  }
+
+  return used;
+}

@@ -11,6 +11,11 @@ import { indent, joinStatements } from '../utils/code-gen';
 import { arrowBody } from '../utils/arrow-body';
 import { generatePropsDeclaration, isTypeScript } from './vue-props';
 import { returnsTeardown } from '../utils/effect-cleanup';
+import {
+  behaviorHelperSource,
+  behaviorsUsedBy,
+  type BehaviorHelper
+} from './behavior-runtime';
 
 interface GeneratorContext {
   /** Track used composables for imports */
@@ -19,6 +24,8 @@ interface GeneratorContext {
   stateRefs: Set<string>;
   /** Track computed values */
   computedNames: Set<string>;
+  /** Behavior helpers the emitted lifecycle effects call */
+  usedBehaviors: Set<BehaviorHelper>;
   /** Track prop names, which are reached through the `props` object in script scope */
   propNames: Set<string>;
   /** Component name */
@@ -57,6 +64,7 @@ export function generateVue(ir: DurableComponentIR, options: { browserSafe?: boo
     usedComposables: new Set(),
     stateRefs: new Set(),
     computedNames: new Set(),
+    usedBehaviors: new Set(),
     propNames: new Set(ir.props.map((prop) => prop.name)),
     componentName: ir.name
   };
@@ -80,7 +88,8 @@ export function generateVue(ir: DurableComponentIR, options: { browserSafe?: boo
     const externalImports = generateExternalImports(ir);
     const types = generateTypes(ir);
     const imports = joinStatements(vueImports, externalImports);
-    const fullScript = joinStatements(imports, types, scriptContent);
+    const behaviorHelpers = behaviorHelperSource(ctx.usedBehaviors);
+    const fullScript = joinStatements(imports, types, behaviorHelpers, scriptContent);
 
     // The script has to be marked as TypeScript whenever it actually contains
     // any: a TS source, or emitted type declarations. Props no longer force it
@@ -123,6 +132,7 @@ function generateVueBrowser(ir: DurableComponentIR, ctx: GeneratorContext): Comp
   if (ir.functions.length > 0) {
     statements.push(generateFunctionDeclarations(ir, ctx));
   }
+  statements.push(generateLifecycleDeclarations(ir, ctx));
 
   const returnNames = [
     ...Array.from(ctx.stateRefs),
@@ -241,6 +251,18 @@ function generateScriptSetup(ir: DurableComponentIR, ctx: GeneratorContext): str
     statements.push(generateStateDeclarations(ir, ctx));
   }
 
+  // Generate element references (bind:this). These are refs like any other, so
+  // registering them makes script-scope expressions reach them through .value.
+  if (ir.refs && ir.refs.length > 0) {
+    ctx.usedComposables.add('ref');
+    for (const elementRef of ir.refs) {
+      ctx.stateRefs.add(elementRef.name);
+    }
+    statements.push(
+      ir.refs.map((elementRef) => `const ${elementRef.name} = ref(null);`).join('\n')
+    );
+  }
+
   // Generate derived values (computed)
   if (ir.derived.length > 0) {
     ctx.usedComposables.add('computed');
@@ -257,6 +279,12 @@ function generateScriptSetup(ir: DurableComponentIR, ctx: GeneratorContext): str
   if (ir.functions.length > 0) {
     statements.push(generateFunctionDeclarations(ir, ctx));
   }
+
+  // Generate mount/unmount effects from the dce:* behavior primitives. These
+  // come after the function declarations because a primitive's handler is
+  // usually one of them, and the emitted functions are `const` — referencing
+  // one earlier would hit the temporal dead zone.
+  statements.push(generateLifecycleDeclarations(ir, ctx));
 
   return statements.filter(Boolean).join('\n\n');
 }
@@ -279,6 +307,45 @@ function generateStateDeclarations(ir: DurableComponentIR, ctx: GeneratorContext
   });
 
   return declarations.join('\n');
+}
+
+/**
+ * Generate the mount/unmount effects contributed by the dce:* primitives.
+ *
+ * Vue splits these across onMounted and onUnmounted. The teardown each helper
+ * returns is stashed in a module-local so the unmount hook can call it.
+ */
+function generateLifecycleDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
+  const lifecycle = ir.lifecycle ?? [];
+  if (lifecycle.length === 0) return '';
+
+  ctx.usedComposables.add('onMounted');
+  ctx.usedComposables.add('onUnmounted');
+  for (const helper of behaviorsUsedBy(lifecycle)) {
+    ctx.usedBehaviors.add(helper);
+  }
+
+  const teardownVar = '__dceTeardowns';
+  const setups = lifecycle.map((effect) => {
+    // Props and refs need their script-scope accessors here, the same as any
+    // other expression the generator emits into <script setup>.
+    const setup = transformExpression(effect.setup, ctx);
+    const teardown = effect.teardown
+      ? transformExpression(effect.teardown, ctx)
+      : undefined;
+
+    return teardown
+      ? `${setup};\n${teardownVar}.push(() => ${teardown});`
+      : `${teardownVar}.push(${setup});`;
+  });
+
+  return [
+    `const ${teardownVar} = [];`,
+    `onMounted(() => {\n${indent(setups.join('\n'))}\n});`,
+    `onUnmounted(() => {\n${indent(
+      `${teardownVar}.forEach((fn) => { if (typeof fn === 'function') fn(); });\n${teardownVar}.length = 0;`
+    )}\n});`
+  ].join('\n\n');
 }
 
 /**
@@ -387,6 +454,10 @@ function generateTemplate(node: TemplateNode, ctx: GeneratorContext, depth: numb
     case 'comment':
       return `<!-- ${node.content} -->`;
 
+    case 'dce-behavior':
+      // Behavior primitives contribute a lifecycle effect, not markup.
+      return '';
+
     case 'dce-element':
       return generateDceElement(node, ctx, depth);
 
@@ -462,6 +533,10 @@ function generateElement(node: any, ctx: GeneratorContext, depth: number): strin
         attrs.push(`v-model="${varName}"`);
       } else if (propName === 'checked') {
         attrs.push(`v-model="${varName}"`);
+      } else if (propName === 'this') {
+        // bind:this is an element reference, not a two-way binding — Vue
+        // spells that `ref`. `v-model:this` was never a valid directive.
+        attrs.push(`ref="${varName}"`);
       } else {
         // Generic binding
         attrs.push(`v-model:${propName}="${varName}"`);
@@ -834,6 +909,8 @@ function generateDceElement(node: any, ctx: GeneratorContext, depth: number): st
       const varName = attr.value.replace('state.', '');
       if (propName === 'value' || propName === 'checked') {
         attrs.push(`v-model="${varName}"`);
+      } else if (propName === 'this') {
+        attrs.push(`ref="${varName}"`);
       } else {
         attrs.push(`v-model:${propName}="${varName}"`);
       }

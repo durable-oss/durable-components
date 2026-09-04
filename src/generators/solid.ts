@@ -11,6 +11,11 @@ import { indent, joinStatements } from '../utils/code-gen';
 import { generateModifierWrapper } from '../utils/event-modifiers';
 import { arrowBody } from '../utils/arrow-body';
 import { returnsTeardown } from '../utils/effect-cleanup';
+import {
+  behaviorHelperSource,
+  behaviorsUsedBy,
+  type BehaviorHelper
+} from './behavior-runtime';
 
 interface GeneratorContext {
   /** Track used Solid primitives for imports */
@@ -21,6 +26,8 @@ interface GeneratorContext {
   stateSetters: Map<string, string>;
   /** Track derived values (memos) */
   derivedNames: Set<string>;
+  /** Behavior helpers the emitted lifecycle effects call */
+  usedBehaviors: Set<BehaviorHelper>;
   /** Component name */
   componentName: string;
 }
@@ -34,6 +41,7 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
     stateGetters: new Map(),
     stateSetters: new Map(),
     derivedNames: new Set(),
+    usedBehaviors: new Set(),
     componentName: ir.name
   };
 
@@ -47,7 +55,15 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
   const solidImports = generateSolidImports(ctx);
 
   // Combine all parts
-  const code = joinStatements(solidImports, externalImports, types, propsInterface, component);
+  const behaviorHelpers = behaviorHelperSource(ctx.usedBehaviors);
+  const code = joinStatements(
+    solidImports,
+    externalImports,
+    types,
+    propsInterface,
+    behaviorHelpers,
+    component
+  );
 
   return {
     code
@@ -199,6 +215,15 @@ function generateComponent(ir: DurableComponentIR, ctx: GeneratorContext): strin
     body.push(generateFunctionDeclarations(ir, ctx));
   }
 
+  // Generate mount/unmount effects from the dce:* behavior primitives. These
+  // come after the function declarations because a primitive's handler is
+  // usually one of them, and the emitted functions are `const` — referencing
+  // one earlier would hit the temporal dead zone.
+  const lifecycleDeclarations = generateLifecycleDeclarations(ir, ctx);
+  if (lifecycleDeclarations) {
+    body.push(lifecycleDeclarations);
+  }
+
   // Generate JSX return — wrap in fragment if root is not an element
   const jsx = generateJSX(ir.template, ctx);
   const needsFragment = !jsx.trimStart().startsWith('<');
@@ -276,6 +301,36 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
   });
 
   return declarations.join('\n');
+}
+
+/**
+ * Generate the mount/unmount effects contributed by the dce:* primitives.
+ *
+ * Solid runs these once via onMount and registers the teardown with onCleanup,
+ * which is how it models unmount — a value returned from the callback is
+ * discarded.
+ */
+function generateLifecycleDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
+  const lifecycle = ir.lifecycle ?? [];
+  if (lifecycle.length === 0) return '';
+
+  ctx.usedPrimitives.add('onMount');
+  ctx.usedPrimitives.add('onCleanup');
+  for (const helper of behaviorsUsedBy(lifecycle)) {
+    ctx.usedBehaviors.add(helper);
+  }
+
+  return lifecycle
+    .map((effect) => {
+      // With no explicit teardown the helper's own return value is the
+      // teardown, so the setup call is passed straight to onCleanup.
+      const setup = effect.teardown
+        ? `${effect.setup};\nonCleanup(() => ${effect.teardown});`
+        : `onCleanup(${effect.setup});`;
+
+      return `onMount(() => {\n${indent(setup)}\n});`;
+    })
+    .join('\n');
 }
 
 /**
@@ -436,6 +491,10 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
 
     case 'comment':
       return `{/* ${node.content} */}`;
+
+    case 'dce-behavior':
+      // Behavior primitives contribute a lifecycle effect, not markup.
+      return '';
 
     case 'dce-element':
       return generateDceElementJSX(node, ctx, depth);

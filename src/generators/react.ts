@@ -15,6 +15,11 @@ import {
   STYLE_HELPER_SOURCE,
   parseStaticStyle
 } from '../utils/css-style';
+import {
+  behaviorHelperSource,
+  behaviorsUsedBy,
+  type BehaviorHelper
+} from './behavior-runtime';
 
 interface GeneratorContext {
   /** Track used hooks for imports */
@@ -25,6 +30,8 @@ interface GeneratorContext {
   usesStyleHelper: boolean;
   /** Capitalized aliases for `<dce:element>` tag expressions, in emit order */
   dynamicTags: Map<string, string>;
+  /** Behavior helpers the emitted lifecycle effects call */
+  usedBehaviors: Set<BehaviorHelper>;
   /** Component name */
   componentName: string;
 }
@@ -38,6 +45,7 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
     stateSetters: new Map(),
     usesStyleHelper: false,
     dynamicTags: new Map(),
+    usedBehaviors: new Set(),
     componentName: ir.name
   };
 
@@ -53,6 +61,7 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
   // The style helper is only emitted when a dynamic `style` prop needs it;
   // `ctx.usesStyleHelper` is set while the component body is generated above.
   const styleHelper = ctx.usesStyleHelper ? STYLE_HELPER_SOURCE : '';
+  const behaviorHelpers = behaviorHelperSource(ctx.usedBehaviors);
 
   // Combine all parts
   const code = joinStatements(
@@ -61,6 +70,7 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
     types,
     propsInterface,
     styleHelper,
+    behaviorHelpers,
     component
   );
 
@@ -195,6 +205,15 @@ function generateComponent(ir: DurableComponentIR, ctx: GeneratorContext): strin
     body.push(generateFunctionDeclarations(ir, ctx));
   }
 
+  // Generate mount/unmount effects from the dce:* behavior primitives. These
+  // come after the function declarations because a primitive's handler is
+  // usually one of them, and the emitted functions are `const` — referencing
+  // one earlier would hit the temporal dead zone.
+  const lifecycleDeclarations = generateLifecycleDeclarations(ir, ctx);
+  if (lifecycleDeclarations) {
+    body.push(lifecycleDeclarations);
+  }
+
   // Generate JSX return — wrap in fragment if root is not an element
   const jsx = generateJSX(ir.template, ctx);
 
@@ -288,6 +307,52 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
  * which only handles `=`.
  */
 const COMPOUND_ASSIGNMENT_OPERATORS = '>>>|\\*\\*|<<|>>|&&|\\|\\||\\?\\?|[+\\-*/%&|^]';
+
+/**
+ * Generate the mount/unmount effects contributed by the dce:* primitives.
+ *
+ * Each becomes a `useEffect` with an empty dependency array: these set up on
+ * mount and tear down on unmount, and do not re-run when state changes. A
+ * helper that returns its own teardown is returned directly, which is exactly
+ * the cleanup contract useEffect expects.
+ */
+function generateLifecycleDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
+  const lifecycle = ir.lifecycle ?? [];
+  if (lifecycle.length === 0) return '';
+
+  ctx.usedHooks.add('useEffect');
+  for (const helper of behaviorsUsedBy(lifecycle)) {
+    ctx.usedBehaviors.add(helper);
+  }
+
+  // A `bind:this` target is a ref object in React, so the element it holds is
+  // reached through `.current`.
+  const withRefAccess = (code: string): string =>
+    (ir.refs ?? []).reduce(
+      (acc, ref) =>
+        acc.replace(new RegExp(`\\b${ref.name}\\b(?!\\.current)`, 'g'), `${ref.name}.current`),
+      code
+    );
+
+  return lifecycle
+    .map((raw) => {
+      const effect = {
+        ...raw,
+        setup: withRefAccess(raw.setup),
+        teardown: raw.teardown ? withRefAccess(raw.teardown) : undefined
+      };
+
+      if (effect.teardown) {
+        return `useEffect(() => {\n${indent(
+          `${effect.setup};\nreturn () => ${effect.teardown};`
+        )}\n}, []);`;
+      }
+
+      // The helper's own return value is the teardown.
+      return `useEffect(() => ${effect.setup}, []);`;
+    })
+    .join('\n');
+}
 
 /**
  * Generate useEffect declarations
@@ -397,6 +462,10 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
 
     case 'comment':
       return `{/* ${node.content} */}`;
+
+    case 'dce-behavior':
+      // Behavior primitives contribute a lifecycle effect, not markup.
+      return '';
 
     case 'dce-element':
       return generateDceElementJSX(node, ctx, depth);

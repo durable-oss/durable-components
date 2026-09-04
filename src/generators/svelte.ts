@@ -9,6 +9,7 @@ import type { DurableComponentIR, TemplateNode } from '../types/ir';
 import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
 import { generateModifierWrapper } from '../utils/event-modifiers';
+import { behaviorHelperSource, behaviorsUsedBy } from './behavior-runtime';
 
 /**
  * Generate Svelte 5 component from IR
@@ -26,7 +27,8 @@ export function generateSvelte(ir: DurableComponentIR): CompiledJS {
   if (scriptContent.trim() || ir.imports || ir.types) {
     const externalImports = generateExternalImports(ir);
     const types = generateTypes(ir);
-    const fullScript = joinStatements(externalImports, types, scriptContent);
+    const behaviorHelpers = behaviorHelperSource(behaviorsUsedBy(ir.lifecycle ?? []));
+    const fullScript = joinStatements(externalImports, types, behaviorHelpers, scriptContent);
 
     const scriptLang = ir.lang === 'ts' || ir.lang === 'typescript' ? ' lang="ts"' : '';
     parts.push(`<script${scriptLang}>\n${indent(fullScript)}\n</script>`);
@@ -129,6 +131,9 @@ function generateScriptContent(ir: DurableComponentIR): string {
     statements.push(generateFunctionDeclarations(ir));
   }
 
+  // Generate mount/unmount effects from the dce:* behavior primitives
+  statements.push(generateLifecycleDeclarations(ir));
+
   return statements.filter(Boolean).join('\n\n');
 }
 
@@ -180,6 +185,30 @@ function generateDerivedDeclarations(ir: DurableComponentIR): string {
   });
 
   return declarations.join('\n');
+}
+
+/**
+ * Generate the mount/unmount effects contributed by the dce:* primitives.
+ *
+ * Svelte 5 models these with `$effect`, which honours a returned teardown
+ * directly — no extra plumbing needed.
+ */
+function generateLifecycleDeclarations(ir: DurableComponentIR): string {
+  const lifecycle = ir.lifecycle ?? [];
+  if (lifecycle.length === 0) return '';
+
+  return lifecycle
+    .map((effect) => {
+      if (effect.teardown) {
+        return `$effect(() => {\n${indent(
+          `${effect.setup};\nreturn () => ${effect.teardown};`
+        )}\n});`;
+      }
+
+      // The helper's own return value is the teardown.
+      return `$effect(() => ${effect.setup});`;
+    })
+    .join('\n\n');
 }
 
 /**
@@ -251,6 +280,10 @@ function generateTemplate(node: TemplateNode, depth: number = 0): string {
 
     case 'comment':
       return `<!-- ${node.content} -->`;
+
+    case 'dce-behavior':
+      // Behavior primitives contribute a lifecycle effect, not markup.
+      return '';
 
     case 'dce-element':
       return generateDceElement(node, depth);
