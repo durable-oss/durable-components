@@ -479,6 +479,13 @@ function generateElementJSX(
   return `<${name}${propsStr}>\n${indent(childrenJSX)}\n</${name}>`;
 }
 
+/** Access a named-slot prop by dot when the name is a valid identifier, else by index. */
+function propAccess(name: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+    ? `.${name}`
+    : `[${JSON.stringify(name)}]`;
+}
+
 /**
  * Read the slot name off an element-shaped `<slot>` node.
  *
@@ -487,10 +494,16 @@ function generateElementJSX(
  * anything else falls back to the default slot.
  */
 function slotNodeFromElement(node: any): { type: 'slot'; name?: string; fallback: any[] } {
-  const attrs = node.attributes || [];
-  const nameAttr = attrs.find((attr: any) => attr.name === 'name');
-  const raw = nameAttr ? String(nameAttr.value) : undefined;
-  const name = raw ? raw.replace(/^["']|["']$/g, '') : undefined;
+  // A static name lands in bindings as a quoted string ("header"); a name
+  // written as a plain HTML attribute lands in attributes instead.
+  const bound = node.bindings ? node.bindings.name : undefined;
+  const nameAttr = (node.attributes || []).find((attr: any) => attr.name === 'name');
+  const raw = bound !== undefined ? String(bound) : nameAttr ? String(nameAttr.value) : undefined;
+
+  // Only a static string names a slot. A dynamic name (a bare expression) has
+  // no compile-time prop to map to, so treat it as the default slot.
+  const isStatic = raw !== undefined && /^(["']).*\1$/.test(raw);
+  const name = isStatic ? raw!.slice(1, -1) : undefined;
 
   return {
     type: 'slot',
@@ -508,7 +521,7 @@ function slotNodeFromElement(node: any): { type: 'slot'; name?: string; fallback
  * child (0, '') is still rendered.
  */
 function generateSlotJSX(node: any, ctx: GeneratorContext, depth: number): string {
-  const source = node.name ? `props[${JSON.stringify(node.name)}]` : 'props.children';
+  const source = node.name ? `props${propAccess(node.name)}` : 'props.children';
   const fallback = node.fallback || node.children || [];
 
   const fallbackJSX = fallback
