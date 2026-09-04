@@ -99,17 +99,18 @@ Built on **[Durable Programming Principles](https://durableprogramming.com)** fo
 - **Svelte 5 Compilation** - Native Runes output (reverse transformation)
 - **Scoped CSS** - Svelte/Vue-style scoped styles with attribute selectors
 - **Explicit Reactivity** - Svelte 5 Runes ($state, $props, $derived, $effect)
+- **Vue 3 Compilation** - Composition API output (`<script setup>`, ref, computed)
 - **Template Directives** - {#if}, {#each}, on:event, bind:value
+- **Behavior Primitives** - Focus trap, Escape, scroll lock, and auto-dismiss timers, portable across every target
 - **Component Flattening** - Automatic recursive compilation of DCE component dependencies
 - **CLI Tool** - Simple `dcc` command for compilation
 - **Programmatic API** - `compile()` function for build tools
 - **Vite Plugin** - Seamless integration with Vite build tool
 - **TypeScript Support** - Full type definitions included
-- **53/53 Tests Passing** - Comprehensive test coverage
+- **Comprehensive Test Coverage** - Generated output is verified against each framework's real compiler
 
 ### 🚧 Roadmap (Phase 3+)
 
-- Vue 3 Composition API compilation
 - Web Components (standards-based)
 - UnoCSS integration
 - Webpack plugin
@@ -161,6 +162,49 @@ function increment() {
   count++;
 }
 ```
+
+### Behavior Primitives
+
+Interaction behaviors that every framework needs but none spells the same way.
+Each compiles to a mount/unmount effect — `useEffect` on React,
+`onMount`/`onCleanup` on Solid, `onMounted`/`onUnmounted` on Vue, `$effect` on
+Svelte — with the teardown wired in, so nothing leaks when the component
+unmounts.
+
+| Primitive | Purpose |
+|---|---|
+| `<dce:focus-trap for={el} />` | Confine Tab navigation to an element; restores focus on teardown |
+| `<dce:escape on:escape={fn} />` | Run a handler on the Escape key |
+| `<dce:scroll-lock />` | Prevent the page behind from scrolling; nested locks are reference-counted |
+| `<dce:timer after={ms} on:elapsed={fn} />` | Auto-dismiss timer; a non-positive delay disables it |
+
+```html
+<script>
+  let { onClose } = $props();
+  let dialog;
+</script>
+
+<template>
+  <div class="overlay">
+    <dce:scroll-lock />
+    <dce:escape on:escape={onClose} />
+    <dce:timer after={5000} on:elapsed={onClose} />
+    <dce:focus-trap for={dialog} />
+
+    <div bind:this={dialog} role="dialog">
+      <slot />
+    </div>
+  </div>
+</template>
+```
+
+The helper implementations are emitted inline alongside the component, so
+generated output stays standalone with no runtime dependency. Only the helpers
+a component actually uses are included.
+
+The focus trap honours `[autofocus]`, skips hidden and disabled elements, and
+cycles in both directions. The scroll lock compensates for scrollbar width so
+the page does not shift when it engages.
 
 ## 📦 Installation
 

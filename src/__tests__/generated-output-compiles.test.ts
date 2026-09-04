@@ -197,3 +197,33 @@ describe('generated output compiles', () => {
     }
   });
 });
+
+const BEHAVIOR_PRIMITIVES = `
+<script>
+  let { onClose } = $props();
+  let dialog;
+  function onResize(e) { console.log(e); }
+</script>
+<template>
+  <div>
+    <dce:window on:resize={onResize} />
+    <dce:scroll-lock />
+    <dce:escape on:escape={onClose} />
+    <dce:timer after={5000} on:elapsed={onClose} />
+    <dce:focus-trap for={dialog} />
+    <div bind:this={dialog} role="dialog"><slot /></div>
+  </div>
+</template>
+`.trim();
+
+describe('behavior primitives compile', () => {
+  for (const target of ALL_TARGETS) {
+    it(`${target} output compiles`, () => {
+      const code = expectCompiles(BEHAVIOR_PRIMITIVES, target);
+
+      // The inline helpers and their lifecycle wiring both have to be present.
+      expect(code).toContain('__dceFocusTrap');
+      expect(code).toContain("window.addEventListener('resize'");
+    });
+  }
+});

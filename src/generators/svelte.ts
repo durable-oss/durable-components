@@ -577,26 +577,13 @@ function generateDceElement(node: any, depth: number): string {
 /**
  * Generate dce:window (window event handlers)
  */
-function generateDceWindow(node: any): string {
-  const { attributes = [] } = node;
-
-  // Collect all attributes
-  const attrs: string[] = [];
-
-  for (const attr of attributes) {
-    if (attr.name.startsWith('on:')) {
-      const eventName = attr.name.slice(3);
-      const handler = transformExpression(attr.value);
-      const finalHandler = attr.modifiers && attr.modifiers.length > 0
-        ? generateModifierWrapper(attr.modifiers, handler)
-        : handler;
-      attrs.push(`on${eventName}={${finalHandler}}`);
-    }
-  }
-
-  const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
-
-  return `<svelte:window${attrsStr} />`;
+function generateDceWindow(_node: any): string {
+  // Svelte's native <svelte:window> is only legal at the top level of a
+  // component, but a multi-root template is wrapped in a <div>, so emitting it
+  // here produced `svelte_meta_invalid_placement`. The listeners are registered
+  // through the shared lifecycle path instead, which has no placement rule and
+  // behaves identically.
+  return '';
 }
 
 /**
