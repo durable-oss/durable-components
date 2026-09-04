@@ -23,6 +23,8 @@ interface GeneratorContext {
   stateSetters: Map<string, string>;
   /** Set when a dynamic `style` prop needs the CSS-string-to-object helper */
   usesStyleHelper: boolean;
+  /** Capitalized aliases for `<dce:element>` tag expressions, in emit order */
+  dynamicTags: Map<string, string>;
   /** Component name */
   componentName: string;
 }
@@ -35,6 +37,7 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
     usedHooks: new Set(),
     stateSetters: new Map(),
     usesStyleHelper: false,
+    dynamicTags: new Map(),
     componentName: ir.name
   };
 

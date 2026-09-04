@@ -765,7 +765,7 @@ export function extractExpression(node: any): string {
  * Detect whether a static attribute value contains an interpolated
  * `{expression}` segment (ignoring escaped braces).
  */
-function containsInterpolation(text: string): boolean {
+export function containsInterpolation(text: string): boolean {
   if (typeof text !== 'string') return false;
   return /(^|[^\\]){/.test(text) && text.includes('}');
 }
@@ -777,7 +777,7 @@ function containsInterpolation(text: string): boolean {
  * becomes
  *   `dcid-step ${snap.step === 'upload' ? 'active' : ''}`  (wrapped in backticks)
  */
-function interpolatedTextToTemplateLiteral(text: string): string {
+export function interpolatedTextToTemplateLiteral(text: string): string {
   const segments = splitInterpolation(text);
   let result = '`';
   for (const seg of segments) {

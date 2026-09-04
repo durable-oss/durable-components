@@ -12,7 +12,11 @@ import type {
   AttributeBinding
 } from '../types/ir';
 import type { TransformContext } from './template-transformer';
-import { extractExpression } from './template-transformer';
+import {
+  extractExpression,
+  containsInterpolation,
+  interpolatedTextToTemplateLiteral
+} from './template-transformer';
 
 interface DcePlugin {
   transform(node: DceElementASTNode, context: TransformContext): TemplateNode;
@@ -38,7 +42,15 @@ function transformDceAttributes(node: DceElementASTNode): AttributeBinding[] {
           const expr = extractExpression(first.expression);
           attributes.push({ name: attr.name, value: expr });
         } else if (first.type === 'Text') {
-          attributes.push({ name: attr.name, value: `"${first.data}"` });
+          // A static value may still interpolate, e.g. style="width: {w}px".
+          // Ordinary elements convert those to a template literal; dce:*
+          // elements have to do the same or the braces are emitted literally.
+          attributes.push({
+            name: attr.name,
+            value: containsInterpolation(first.data)
+              ? interpolatedTextToTemplateLiteral(first.data)
+              : `"${first.data}"`
+          });
         }
       }
     }
