@@ -12,7 +12,17 @@ import { textNode, mustacheTag, commentNode } from './basic-nodes';
 import { renderBlock, constTag, htmlTag, debugTag } from './directives';
 import { ifBlock, eachBlock, keyBlock, snippetBlock, setTemplateNodeParser as setBlockTemplateNode } from './blocks';
 import { element, setTemplateNodeParser as setElementTemplateNode } from './elements';
-import { dceElement, dceWindow, dceBoundary, dceHead, setTemplateNodeParser as setDceTemplateNode } from './dce-elements';
+import {
+  dceElement,
+  dceWindow,
+  dceBoundary,
+  dceHead,
+  dceFocusTrap,
+  dceEscape,
+  dceScrollLock,
+  dceTimer,
+  setTemplateNodeParser as setDceTemplateNode
+} from './dce-elements';
 
 const optWhitespace = P.optWhitespace;
 
@@ -35,6 +45,10 @@ const templateNode: P.Parser<TemplateASTNode> = P.lazy(() =>
     dceWindow,
     dceBoundary,
     dceHead,
+    dceFocusTrap,
+    dceEscape,
+    dceScrollLock,
+    dceTimer,
     element,
     mustacheTag,
     textNode

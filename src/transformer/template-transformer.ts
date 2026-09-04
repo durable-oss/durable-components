@@ -33,7 +33,8 @@ import type {
   DebugNode,
   CommentNode,
   AttributeBinding,
-  SnippetDefinition
+  SnippetDefinition,
+  LifecycleEffect
 } from '../types/ir';
 import { getDcePlugin } from './dce-elements';
 import { parseExpression } from '../parser/parsimmon/utils';
@@ -43,6 +44,8 @@ import { parseExpression } from '../parser/parsimmon/utils';
  */
 export interface TransformContext {
   snippets: SnippetDefinition[];
+  /** Mount/unmount effects collected from the dce:* behavior primitives. */
+  lifecycle: LifecycleEffect[];
   transformNode: (node: TemplateASTNode, context: TransformContext) => TemplateNode;
 }
 
@@ -50,7 +53,9 @@ export interface TransformContext {
  * Transform template AST nodes to IR template nodes
  * Returns both the template and any snippets found
  */
-export function transformTemplate(nodes: TemplateASTNode[]): { template: TemplateNode; snippets: SnippetDefinition[] } {
+export function transformTemplate(
+  nodes: TemplateASTNode[]
+): { template: TemplateNode; snippets: SnippetDefinition[]; lifecycle: LifecycleEffect[] } {
   // Defensive: validate input
   if (!Array.isArray(nodes)) {
     throw new TypeError('transformTemplate: nodes must be an array');
@@ -62,7 +67,7 @@ export function transformTemplate(nodes: TemplateASTNode[]): { template: Templat
     throw new Error(`transformTemplate: too many nodes (${nodes.length} > ${MAX_NODES})`);
   }
 
-  const context: TransformContext = { snippets: [], transformNode };
+  const context: TransformContext = { snippets: [], lifecycle: [], transformNode };
 
   // Separate snippet definitions from regular template nodes
   const templateNodes = nodes.filter(node => node.type !== 'SnippetBlock');
@@ -86,7 +91,8 @@ export function transformTemplate(nodes: TemplateASTNode[]): { template: Templat
         name: 'div',
         children: []
       },
-      snippets: context.snippets
+      snippets: context.snippets,
+      lifecycle: context.lifecycle
     };
   }
 
@@ -101,7 +107,8 @@ export function transformTemplate(nodes: TemplateASTNode[]): { template: Templat
 
     return {
       template: transformNode(templateNodes[0], context),
-      snippets: context.snippets
+      snippets: context.snippets,
+      lifecycle: context.lifecycle
     };
   }
 
@@ -130,7 +137,8 @@ export function transformTemplate(nodes: TemplateASTNode[]): { template: Templat
         }
       })
     },
-    snippets: context.snippets
+    snippets: context.snippets,
+    lifecycle: context.lifecycle
   };
 }
 

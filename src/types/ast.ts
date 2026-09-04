@@ -325,7 +325,16 @@ export interface CommentASTNode extends BaseTemplateNode {
  */
 export interface DceElementASTNode extends BaseTemplateNode {
   type: 'DceElement';
-  kind: 'element' | 'window' | 'boundary' | 'head';
+  kind:
+    | 'element'
+    | 'window'
+    | 'boundary'
+    | 'head'
+    // Behavior primitives: lifecycle side effects rather than markup.
+    | 'focus-trap'
+    | 'escape'
+    | 'scroll-lock'
+    | 'timer';
   tagExpression?: AcornNode; // For dce:element - expression for the tag name
   attributes: TemplateAttribute[];
   children: TemplateASTNode[];

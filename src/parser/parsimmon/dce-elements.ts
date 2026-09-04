@@ -151,3 +151,53 @@ export const dceHead: IndexedParser<DceElementASTNode> = indexed(
     })
   )
 );
+
+/**
+ * Build a parser for a `dce:*` tag that carries only attributes.
+ *
+ * Every such tag has the same shape — `<dce:name ...attrs />` or a matching
+ * open/close pair — so the four behavior primitives share one factory rather
+ * than four near-identical copies.
+ */
+function dceAttributeTag(
+  name: string,
+  kind: DceElementASTNode['kind']
+): IndexedParser<DceElementASTNode> {
+  return indexed(
+    P.lazy(() =>
+      P.seqObj<any>(
+        P.string(`<dce:${name}`),
+        ['attributes', optWhitespace.then(P.alt(spreadAttribute, shorthandAttribute, attribute).sepBy(optWhitespace))],
+        optWhitespace,
+        ['selfClosing', P.string('/').result(true).fallback(false)],
+        P.string('>')
+      ).chain(({ attributes, selfClosing }) => {
+        if (selfClosing) {
+          return P.succeed({
+            type: 'DceElement' as const,
+            kind,
+            attributes: attributes || [],
+            children: []
+          });
+        }
+        return P.lazy(() => templateNodeParser.many())
+          .skip(P.string(`</dce:${name}>`))
+          .map(children => ({
+            type: 'DceElement' as const,
+            kind,
+            attributes: attributes || [],
+            children
+          }));
+      })
+    )
+  );
+}
+
+/**
+ * The behavior primitives. Each compiles to a mount/unmount effect rather than
+ * to markup, so they render nothing themselves.
+ */
+export const dceFocusTrap = dceAttributeTag('focus-trap', 'focus-trap');
+export const dceEscape = dceAttributeTag('escape', 'escape');
+export const dceScrollLock = dceAttributeTag('scroll-lock', 'scroll-lock');
+export const dceTimer = dceAttributeTag('timer', 'timer');
