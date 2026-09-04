@@ -8,6 +8,8 @@
 import type { TemplateNode } from '../types/ir';
 import type { CompiledCSS } from '../types/compiler';
 import { generateHash } from '../utils/string';
+import { splitRules, splitSelectorList } from './css-split';
+import { scopeSelector } from './selector-scope';
 
 /**
  * Generate scoped CSS
@@ -36,42 +38,21 @@ export function generateScopedCSS(
 }
 
 /**
- * Add scope attributes to CSS selectors
+ * Add scope attributes to CSS selectors.
+ *
+ * Rules are split comment-aware (see `./css-split`) so a comma inside a comment
+ * is not mistaken for a selector separator, and the attribute lands on each
+ * selector's first compound (see `./selector-scope`) so descendants — including
+ * slotted content, which never carries the scope attribute — still match.
  */
 function scopeCSS(css: string, scopeId: string): string {
-  // This is a simplified CSS parser
-  // For production, consider using a proper CSS AST parser
-
   const attribute = `[data-${scopeId}]`;
 
-  // Split by rule blocks
-  const rules: string[] = [];
-  let current = '';
-  let depth = 0;
+  const transformed = splitRules(css).map((chunk) => {
+    // Comments and stray whitespace between rules pass through untouched.
+    if (chunk.isTrivia) return chunk.text;
 
-  for (let i = 0; i < css.length; i++) {
-    const char = css[i];
-    current += char;
-
-    if (char === '{') {
-      depth++;
-    } else if (char === '}') {
-      depth--;
-      if (depth === 0) {
-        rules.push(current.trim());
-        current = '';
-      }
-    }
-  }
-
-  // Add any remaining content
-  if (current.trim()) {
-    rules.push(current.trim());
-  }
-
-  // Transform each rule
-  const transformed = rules.map((rule) => {
-    // Split selector from body
+    const rule = chunk.text;
     const openBrace = rule.indexOf('{');
     if (openBrace === -1) return rule;
 
@@ -90,26 +71,9 @@ function scopeCSS(css: string, scopeId: string): string {
       return rule;
     }
 
-    // Split multiple selectors (,)
-    const selectors = selector.split(',').map((s) => s.trim());
-
-    // Add scope attribute to each selector
-    const scopedSelectors = selectors.map((sel) => {
-      // Handle pseudo-elements (::before, ::after)
-      const pseudoElementMatch = sel.match(/(.*?)(::[\w-]+.*)/);
-      if (pseudoElementMatch) {
-        return `${pseudoElementMatch[1]}${attribute}${pseudoElementMatch[2]}`;
-      }
-
-      // Handle pseudo-classes (:hover, :focus, etc.)
-      const pseudoClassMatch = sel.match(/(.*?)(:[^:\s]+.*)/);
-      if (pseudoClassMatch) {
-        return `${pseudoClassMatch[1]}${attribute}${pseudoClassMatch[2]}`;
-      }
-
-      // Simple selector
-      return `${sel}${attribute}`;
-    });
+    const scopedSelectors = splitSelectorList(selector).map((sel) =>
+      scopeSelector(sel, attribute)
+    );
 
     return `${scopedSelectors.join(', ')} ${body}`;
   });
