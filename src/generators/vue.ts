@@ -294,14 +294,9 @@ function generateStateDeclarations(ir: DurableComponentIR, ctx: GeneratorContext
 
     let initialValue = state.initialValue;
 
-    // If initial value references props, ensure it has props. prefix
-    // Check if the value matches any prop name
+    // A prop used to seed state is reached through the `props` object.
     for (const prop of ir.props) {
-      // Match the prop name as a standalone identifier (not already prefixed with props.)
-      initialValue = initialValue.replace(
-        new RegExp(`\\b(?<!props\\.)${prop.name}\\b`, 'g'),
-        `props.${prop.name}`
-      );
+      initialValue = qualifyIdentifier(initialValue, prop.name, `props.${prop.name}`);
     }
 
     return `const ${state.name} = ref(${initialValue});`;
@@ -359,11 +354,13 @@ function generateFunctionDeclarations(ir: DurableComponentIR, ctx: GeneratorCont
       );
     }
 
-    // Then handle special cases for state updates
-    for (const state of ir.state) {
-      // Replace count.value++ (which is already correct)
-      // Replace count.value-- (which is already correct)
-      // These should already be correct from the previous transformation
+    // Props are reached through the `props` object in script scope, so a bare
+    // prop identifier has to be qualified — unless a parameter of this function
+    // shadows it, in which case the local binding is what the body means.
+    const shadowed = new Set(func.params || []);
+    for (const propName of ctx.propNames) {
+      if (shadowed.has(propName)) continue;
+      body = qualifyIdentifier(body, propName, `props.${propName}`);
     }
 
     // Handle block vs expression body

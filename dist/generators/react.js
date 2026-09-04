@@ -271,7 +271,7 @@ function generateJSX(node, ctx, depth = 0) {
         case 'each':
             return generateEachJSX(node, ctx, depth);
         case 'slot':
-            return '{props.children}';
+            return generateSlotJSX(node, ctx, depth);
         case 'render':
             return generateRenderJSX(node, ctx);
         case 'comment':
@@ -293,6 +293,12 @@ function generateJSX(node, ctx, depth = 0) {
  */
 function generateElementJSX(node, ctx, depth) {
     const { name, attributes = [], bindings = {}, children = [] } = node;
+    // The template parser has no dedicated Slot AST node, so `<slot />` and
+    // `<slot name="header">` arrive here as ordinary elements. A literal
+    // `<slot>` tag is not valid JSX, so route it through the slot generator.
+    if (name === 'slot') {
+        return generateSlotJSX(slotNodeFromElement(node), ctx, depth);
+    }
     // Collect all props
     const props = [];
     // Handle bindings
@@ -390,6 +396,72 @@ function generateElementJSX(node, ctx, depth) {
         return `<${name}${propsStr} />`;
     }
     return `<${name}${propsStr}>\n${(0, code_gen_1.indent)(childrenJSX)}\n</${name}>`;
+}
+/** Access a named-slot prop by dot when the name is a valid identifier, else by index. */
+function propAccess(name) {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+        ? `.${name}`
+        : `[${JSON.stringify(name)}]`;
+}
+/**
+ * Read the slot name off an element-shaped `<slot>` node.
+ *
+ * The name can arrive as a static attribute (`<slot name="header" />`) or, for
+ * a dynamic name, as a binding. Only a static string identifies a named slot;
+ * anything else falls back to the default slot.
+ */
+function slotNodeFromElement(node) {
+    // A static name lands in bindings as a quoted string ("header"); a name
+    // written as a plain HTML attribute lands in attributes instead.
+    const bound = node.bindings ? node.bindings.name : undefined;
+    const nameAttr = (node.attributes || []).find((attr) => attr.name === 'name');
+    const raw = bound !== undefined ? String(bound) : nameAttr ? String(nameAttr.value) : undefined;
+    // Only a static string names a slot. A dynamic name (a bare expression) has
+    // no compile-time prop to map to, so treat it as the default slot.
+    const isStatic = raw !== undefined && /^(["']).*\1$/.test(raw);
+    const name = isStatic ? raw.slice(1, -1) : undefined;
+    return {
+        type: 'slot',
+        name: name || undefined,
+        fallback: node.children || []
+    };
+}
+/**
+ * Generate JSX for a slot.
+ *
+ * React has no slot element. The default slot is `props.children`; a named slot
+ * is passed as a prop of that name. Fallback content renders when the consumer
+ * supplies nothing, which is `??` rather than `||` so that a legitimately falsy
+ * child (0, '') is still rendered.
+ */
+function generateSlotJSX(node, ctx, depth) {
+    const source = node.name ? `props${propAccess(node.name)}` : 'props.children';
+    const fallback = node.fallback || node.children || [];
+    const fallbackJSX = fallback
+        .map((child) => generateSlotFallbackJSX(child, ctx, depth + 1))
+        .filter(Boolean);
+    if (fallbackJSX.length === 0) {
+        return `{${source}}`;
+    }
+    return `{${source} ?? ${wrapJsxChildren(fallbackJSX)}}`;
+}
+/**
+ * Generate one fallback child in expression position.
+ *
+ * Fallback content sits to the right of `??`, inside a JSX expression container
+ * rather than in element-child position. Bare text is a string literal there,
+ * and an `{expr}` child has to shed its braces; everything else is already a
+ * valid expression.
+ */
+function generateSlotFallbackJSX(node, ctx, depth) {
+    if (node.type === 'text') {
+        const content = node.content.trim();
+        return content ? JSON.stringify(content) : '';
+    }
+    if (node.type === 'expression') {
+        return transformExpression(node.expression, {});
+    }
+    return generateJSX(node, ctx, depth);
 }
 /**
  * Generate if statement JSX

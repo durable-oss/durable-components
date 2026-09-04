@@ -38,6 +38,7 @@ function generateVue(ir, options = {}) {
         usedComposables: new Set(),
         stateRefs: new Set(),
         computedNames: new Set(),
+        propNames: new Set(ir.props.map((prop) => prop.name)),
         componentName: ir.name
     };
     if (options.browserSafe) {
@@ -237,11 +238,9 @@ function generateStateDeclarations(ir, ctx) {
     const declarations = ir.state.map((state) => {
         ctx.stateRefs.add(state.name);
         let initialValue = state.initialValue;
-        // If initial value references props, ensure it has props. prefix
-        // Check if the value matches any prop name
+        // A prop used to seed state is reached through the `props` object.
         for (const prop of ir.props) {
-            // Match the prop name as a standalone identifier (not already prefixed with props.)
-            initialValue = initialValue.replace(new RegExp(`\\b(?<!props\\.)${prop.name}\\b`, 'g'), `props.${prop.name}`);
+            initialValue = qualifyIdentifier(initialValue, prop.name, `props.${prop.name}`);
         }
         return `const ${state.name} = ref(${initialValue});`;
     });
@@ -283,11 +282,14 @@ function generateFunctionDeclarations(ir, ctx) {
         for (const state of ir.state) {
             body = body.replace(new RegExp(`\\b${state.name}(?!\\.value)\\b`, 'g'), `${state.name}.value`);
         }
-        // Then handle special cases for state updates
-        for (const state of ir.state) {
-            // Replace count.value++ (which is already correct)
-            // Replace count.value-- (which is already correct)
-            // These should already be correct from the previous transformation
+        // Props are reached through the `props` object in script scope, so a bare
+        // prop identifier has to be qualified — unless a parameter of this function
+        // shadows it, in which case the local binding is what the body means.
+        const shadowed = new Set(func.params || []);
+        for (const propName of ctx.propNames) {
+            if (shadowed.has(propName))
+                continue;
+            body = qualifyIdentifier(body, propName, `props.${propName}`);
         }
         // Handle block vs expression body
         const functionBody = body.startsWith('{') ? body : `{\n${(0, code_gen_1.indent)(body)}\n}`;
@@ -522,6 +524,75 @@ function generateRender(node) {
     return `{{ ${snippet}?.(${argsList}) }}`;
 }
 /**
+ * Replace free occurrences of `name` in a JS expression with `replacement`.
+ *
+ * A plain regex on the identifier is not enough: it also rewrites the property
+ * half of a member access (`theme.variant`), an object key (`{ variant: x }`),
+ * and anything inside a string or template literal. This walks the source and
+ * only substitutes an identifier that stands on its own.
+ */
+function qualifyIdentifier(source, name, replacement) {
+    const identifierChar = /[A-Za-z0-9_$]/;
+    let out = '';
+    let i = 0;
+    while (i < source.length) {
+        const char = source[i];
+        // Skip over string and template literals wholesale.
+        if (char === '"' || char === "'" || char === '`') {
+            const quote = char;
+            let j = i + 1;
+            while (j < source.length) {
+                if (source[j] === '\\') {
+                    j += 2;
+                    continue;
+                }
+                if (source[j] === quote)
+                    break;
+                j++;
+            }
+            out += source.slice(i, Math.min(j + 1, source.length));
+            i = j + 1;
+            continue;
+        }
+        if (identifierChar.test(char)) {
+            let j = i;
+            while (j < source.length && identifierChar.test(source[j]))
+                j++;
+            const word = source.slice(i, j);
+            const prevChar = lastNonSpace(source, i - 1);
+            const nextChar = source[skipSpace(source, j)];
+            const isMemberAccess = prevChar === '.';
+            const isObjectKey = nextChar === ':';
+            const isOptionalChainMember = prevChar === '?' && source[i - 2] === '.';
+            if (word === name && !isMemberAccess && !isObjectKey && !isOptionalChainMember) {
+                out += replacement;
+            }
+            else {
+                out += word;
+            }
+            i = j;
+            continue;
+        }
+        out += char;
+        i++;
+    }
+    return out;
+}
+/** Last non-whitespace character at or before `index`, or undefined. */
+function lastNonSpace(source, index) {
+    let i = index;
+    while (i >= 0 && /\s/.test(source[i]))
+        i--;
+    return i >= 0 ? source[i] : undefined;
+}
+/** Index of the first non-whitespace character at or after `index`. */
+function skipSpace(source, index) {
+    let i = index;
+    while (i < source.length && /\s/.test(source[i]))
+        i++;
+    return i;
+}
+/**
  * Transform IR expression to Vue expression (for script)
  * Remove IR prefixes and add .value for refs
  */
@@ -532,6 +603,14 @@ function transformExpression(expr, ctx) {
     transformed = transformed.replace(/\bprops\./g, 'props.');
     transformed = transformed.replace(/\bderived\./g, '');
     transformed = transformed.replace(/\bfunctions\./g, '');
+    // In script scope, props live on the object returned by defineProps() (or on
+    // the setup() parameter), so a bare prop identifier has to be qualified. The
+    // template does not need this — <script setup> exposes props by name there.
+    if (ctx.propNames) {
+        for (const propName of ctx.propNames) {
+            transformed = qualifyIdentifier(transformed, propName, `props.${propName}`);
+        }
+    }
     // Add .value for state refs (except when already followed by .value)
     if (ctx.stateRefs) {
         for (const stateName of ctx.stateRefs) {
