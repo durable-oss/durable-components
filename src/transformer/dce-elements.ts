@@ -13,6 +13,7 @@ import type {
   AttributeBinding
 } from '../types/ir';
 import { BEHAVIOR_HELPERS } from '../generators/behavior-runtime';
+import { scopeFor } from './lifecycle-scope';
 import type { TransformContext } from './template-transformer';
 import {
   extractExpression,
@@ -151,13 +152,44 @@ function behaviorPlugin(
       const attributes = transformDceAttributes(node);
       const effect = build(attributes);
 
-      if (effect) {
-        context.lifecycle.push({ ...effect, source: behavior });
+      if (!effect) {
+        return { type: 'dce-behavior', behavior };
       }
 
-      return { type: 'dce-behavior', behavior };
+      // An effect that reads an {#each} binding belongs to one iteration, not
+      // to the component. It carries its loop scope so the generators can emit
+      // it inside the loop, where the binding actually exists.
+      const scope = scopeFor(
+        effect,
+        context.loopFrames,
+        `${behavior}_${nextBehaviorId()}`
+      );
+
+      context.lifecycle.push({ ...effect, source: behavior, scope });
+
+      return scope
+        ? { type: 'dce-behavior', behavior, scope }
+        : { type: 'dce-behavior', behavior };
     }
   };
+}
+
+/**
+ * Per-item effects need a stable name for their generated component, and two
+ * primitives of the same kind can appear in one loop, so ids are sequential.
+ */
+let behaviorIdCounter = 0;
+
+function nextBehaviorId(): number {
+  return behaviorIdCounter++;
+}
+
+/**
+ * Reset the id counter so a fresh compile starts from zero and the generated
+ * names are deterministic across runs.
+ */
+export function resetBehaviorIds(): void {
+  behaviorIdCounter = 0;
 }
 
 /**

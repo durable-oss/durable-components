@@ -11,6 +11,7 @@ import { compileScenario } from './compiler';
 import { compile } from '../index';
 import { buildPreviewHtml } from './wrappers/index';
 import type { CompilerTarget } from '../types/compiler';
+import { reportWarnings, resetReportedWarnings } from './report-warnings';
 
 export interface ServerOptions {
   rootDir: string;
@@ -64,6 +65,9 @@ export function startShowcaseServer(options: ServerOptions): void {
     const componentPaths = entries.flatMap(e => e.linkedComponent ? [e.linkedComponent] : []);
 
     return watchFiles([...showcasePaths, ...componentPaths], (changedFile) => {
+      // The file changed, so any warning it still produces is news again.
+      resetReportedWarnings(path.basename(changedFile));
+
       // If a linked component changed, invalidate its showcase's cache and re-broadcast reload
       const showcaseEntry = componentToShowcase.get(changedFile);
       if (showcaseEntry) {
@@ -143,15 +147,18 @@ export function startShowcaseServer(options: ServerOptions): void {
       let componentCss: string | null = null;
       if (entry?.linkedComponent) {
         const raw = fs.readFileSync(entry.linkedComponent, 'utf-8');
+        const componentName = path.basename(entry.linkedComponent);
         if (target === 'svelte') {
           // For Svelte, pass the raw DCE->Svelte output; wrapSvelte handles compilation
-          const compiled = compile(raw, { filename: path.basename(entry.linkedComponent), target });
+          const compiled = compile(raw, { filename: componentName, target });
           componentDce = compiled.js.code;
           componentCss = compiled.css?.code ?? null;
+          reportWarnings(compiled.warnings, componentName);
         } else {
-          const compiled = compile(raw, { filename: path.basename(entry.linkedComponent), target, browserSafe: target !== 'react' });
+          const compiled = compile(raw, { filename: componentName, target, browserSafe: target !== 'react' });
           componentSource = compiled.js.code;
           componentCss = compiled.css?.code ?? null;
+          reportWarnings(compiled.warnings, componentName);
         }
       }
 

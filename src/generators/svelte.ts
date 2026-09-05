@@ -10,15 +10,24 @@ import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
 import { generateModifierWrapper } from '../utils/event-modifiers';
 import { behaviorHelperSource, behaviorsUsedBy } from './behavior-runtime';
+import {
+  partitionLifecycle,
+  scopedComponentName,
+  scopedFor,
+  type ScopedBehavior
+} from './scoped-behavior';
 
 /**
  * Generate Svelte 5 component from IR
  */
 export function generateSvelte(ir: DurableComponentIR): CompiledJS {
+  const scoped = partitionLifecycle(ir).scoped;
+
   // Generate script content
   const scriptContent = generateScriptContent(ir);
 
   // Generate template (HTML)
+  currentScopedBehaviors = scoped;
   const templateContent = generateTemplate(ir.template);
 
   // Combine script and template
@@ -28,7 +37,14 @@ export function generateSvelte(ir: DurableComponentIR): CompiledJS {
     const externalImports = generateExternalImports(ir);
     const types = generateTypes(ir);
     const behaviorHelpers = behaviorHelperSource(behaviorsUsedBy(ir.lifecycle ?? []));
-    const fullScript = joinStatements(externalImports, types, behaviorHelpers, scriptContent);
+    const scopedActions = generateScopedBehaviorActions(ir);
+    const fullScript = joinStatements(
+      externalImports,
+      types,
+      behaviorHelpers,
+      scopedActions,
+      scriptContent
+    );
 
     const scriptLang = ir.lang === 'ts' || ir.lang === 'typescript' ? ' lang="ts"' : '';
     parts.push(`<script${scriptLang}>\n${indent(fullScript)}\n</script>`);
@@ -39,11 +55,21 @@ export function generateSvelte(ir: DurableComponentIR): CompiledJS {
   }
 
   const code = parts.join('\n\n');
+  currentScopedBehaviors = [];
 
   return {
     code
   };
 }
+
+/**
+ * Per-item behavior effects for the component being generated.
+ *
+ * The template walkers below are plain functions rather than methods on a
+ * context object, so the list is held here for the duration of one
+ * generateSvelte call and cleared when it returns.
+ */
+let currentScopedBehaviors: ScopedBehavior[] = [];
 
 /**
  * Generate external module imports
@@ -101,6 +127,18 @@ function generateTypes(ir: DurableComponentIR): string {
 }
 
 /**
+ * Declare the bindings that `bind:this` fills in.
+ *
+ * Svelte assigns the element to the variable, so an undeclared name is a
+ * compile error in the emitted component. `let` with no initializer is the
+ * idiomatic Svelte 5 form — a `$state` rune here would make the reference
+ * reactive, which is not what a DOM handle needs.
+ */
+function generateRefDeclarations(ir: DurableComponentIR): string {
+  return ir.refs.map((ref) => `let ${ref.name};`).join('\n');
+}
+
+/**
  * Generate script section content
  */
 function generateScriptContent(ir: DurableComponentIR): string {
@@ -114,6 +152,11 @@ function generateScriptContent(ir: DurableComponentIR): string {
   // Generate state
   if (ir.state.length > 0) {
     statements.push(generateStateDeclarations(ir));
+  }
+
+  // Generate element references
+  if (ir.refs.length > 0) {
+    statements.push(generateRefDeclarations(ir));
   }
 
   // Generate derived values
@@ -194,7 +237,9 @@ function generateDerivedDeclarations(ir: DurableComponentIR): string {
  * directly — no extra plumbing needed.
  */
 function generateLifecycleDeclarations(ir: DurableComponentIR): string {
-  const lifecycle = ir.lifecycle ?? [];
+  // Effects captured inside an {#each} become per-item actions instead; see
+  // generateScopedBehaviorActions.
+  const lifecycle = partitionLifecycle(ir).componentLevel;
   if (lifecycle.length === 0) return '';
 
   return lifecycle
@@ -282,8 +327,7 @@ function generateTemplate(node: TemplateNode, depth: number = 0): string {
       return `<!-- ${node.content} -->`;
 
     case 'dce-behavior':
-      // Behavior primitives contribute a lifecycle effect, not markup.
-      return '';
+      return generateDceBehavior(node);
 
     case 'dce-element':
       return generateDceElement(node, depth);
@@ -639,4 +683,64 @@ function generateDceHead(node: any, depth: number): string {
   } else {
     return `<svelte:head>${childrenHTML}</svelte:head>`;
   }
+}
+
+
+/**
+ * Render the placeholder a behavior primitive leaves in the template.
+ *
+ * Component-level effects render nothing. One captured inside an {#each}
+ * attaches its generated action to a zero-size element inside the loop body,
+ * so the effect runs once per item and tears down when that item is removed.
+ */
+function generateDceBehavior(node: any): string {
+  const scoped = scopedFor(currentScopedBehaviors, node.scope);
+  if (!scoped) return '';
+
+  const name = scopedActionName(scoped);
+  const args = scoped.props.join(', ');
+
+  // An action needs a host element. `display: contents` keeps it out of layout
+  // while still giving the action something to attach to.
+  return `<span style="display: contents" use:${name}={[${args}]}></span>`;
+}
+
+/**
+ * The action name for a per-item behavior effect.
+ */
+function scopedActionName(scoped: ScopedBehavior): string {
+  return `__dceScoped_${scoped.scope.id}`;
+}
+
+/**
+ * Emit one Svelte action per behavior effect captured inside an {#each}.
+ *
+ * Svelte output is a single file, so a per-item child component is not
+ * available. An action is the equivalent: it runs when its element is created,
+ * receives the loop bindings as a parameter, and its `destroy` runs when that
+ * one item leaves the list.
+ */
+function generateScopedBehaviorActions(ir: DurableComponentIR): string {
+  const { scoped } = partitionLifecycle(ir);
+  if (scoped.length === 0) return '';
+
+  return scoped
+    .map((entry) => {
+      const { effect, props } = entry;
+      const name = scopedActionName(entry);
+      const destructure = `[${props.join(', ')}]`;
+
+      const teardown = effect.teardown
+        ? `${effect.setup};\n    const __dceDestroy = () => ${effect.teardown};`
+        : `const __dceDestroy = ${effect.setup};`;
+
+      return `function ${name}(__dceNode, ${destructure}) {\n${indent(
+        `${teardown}\n\nreturn {\n${indent(
+          `destroy() {\n${indent(
+            `if (typeof __dceDestroy === 'function') __dceDestroy();`
+          )}\n}`
+        )}\n};`
+      )}\n}`;
+    })
+    .join('\n\n');
 }

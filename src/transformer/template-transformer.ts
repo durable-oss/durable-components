@@ -36,7 +36,8 @@ import type {
   SnippetDefinition,
   LifecycleEffect
 } from '../types/ir';
-import { getDcePlugin } from './dce-elements';
+import { getDcePlugin, resetBehaviorIds } from './dce-elements';
+import type { LoopFrame } from './lifecycle-scope';
 import { parseExpression } from '../parser/parsimmon/utils';
 
 /**
@@ -46,6 +47,12 @@ export interface TransformContext {
   snippets: SnippetDefinition[];
   /** Mount/unmount effects collected from the dce:* behavior primitives. */
   lifecycle: LifecycleEffect[];
+  /**
+   * The `{#each}` blocks enclosing the node being transformed, outermost
+   * first. A behavior primitive uses this to tell whether its effect closes
+   * over loop scope and so has to run per item rather than per component.
+   */
+  loopFrames: LoopFrame[];
   transformNode: (node: TemplateASTNode, context: TransformContext) => TemplateNode;
 }
 
@@ -67,7 +74,14 @@ export function transformTemplate(
     throw new Error(`transformTemplate: too many nodes (${nodes.length} > ${MAX_NODES})`);
   }
 
-  const context: TransformContext = { snippets: [], lifecycle: [], transformNode };
+  resetBehaviorIds();
+
+  const context: TransformContext = {
+    snippets: [],
+    lifecycle: [],
+    loopFrames: [],
+    transformNode
+  };
 
   // Separate snippet definitions from regular template nodes
   const templateNodes = nodes.filter(node => node.type !== 'SnippetBlock');
@@ -394,13 +408,20 @@ function transformIfBlock(node: IfBlockASTNode, context: TransformContext): IfNo
 function transformEachBlock(node: EachBlockASTNode, context: TransformContext): EachNode {
   const expr = extractExpression(node.expression);
 
+  // Children are transformed with this loop's bindings pushed onto the frame
+  // stack, so a dce:* primitive nested here can see that it is inside a loop.
+  const inner: TransformContext = {
+    ...context,
+    loopFrames: [...context.loopFrames, { itemName: node.context, indexName: node.index }]
+  };
+
   return {
     type: 'each',
     expression: prefixExpression(expr),
     itemName: node.context,
     indexName: node.index,
     key: node.key ? extractExpression(node.key) : undefined,
-    children: node.children.map(child => transformNode(child, context))
+    children: node.children.map(child => transformNode(child, inner))
   };
 }
 

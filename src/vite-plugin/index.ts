@@ -8,6 +8,7 @@
 import type { Plugin, ViteDevServer } from 'vite';
 import { compile } from '../index';
 import type { CompilerTarget, StyleMode } from '../types/compiler';
+import { formatWarning } from '../utils/format-warning';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -181,6 +182,15 @@ export function durableComponents(
           style,
           dev: isDev
         });
+
+        // Surface diagnostics through Vite's own reporting, so they appear in
+        // the dev server output and the build log rather than only on the
+        // compile result nobody reads.
+        if (result.warnings && result.warnings.length > 0) {
+          for (const warning of result.warnings) {
+            this.warn({ message: formatWarning(warning, filename), id });
+          }
+        }
 
         let transformedCode = result.js.code;
 

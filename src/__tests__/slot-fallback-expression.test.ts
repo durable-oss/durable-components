@@ -96,8 +96,14 @@ describe('slot fallback content', () => {
         const { code } = compile(EACH_IN_SLOT, { target, filename: 'Card.dce' }).js;
 
         expectParses(code);
-        // `.map()` is a call expression, so it needs no extra parens.
-        expect(code).toContain('props.children ?? items.map(');
+        // A call expression and a JSX element both bind tighter than `??`, so
+        // neither loop form needs extra parens here. Solid reconciles lists
+        // with <For>; React maps over the array.
+        expect(code).toMatch(
+          target === 'solid'
+            ? /props\.children \?\? <For each=\{items\}>/
+            : /props\.children \?\? items\.map\(/
+        );
       });
 
       it('unwraps an expression fallback', () => {

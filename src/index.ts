@@ -14,7 +14,12 @@ import { durableSvelteCompiler } from './generators/svelte-plugin';
 import { durableVueCompiler } from './generators/vue-plugin';
 import { durableComponentFlattener } from './transformer/flattener-plugin';
 import { durableTemplateFlatten } from './transformer/template-flattener-plugin';
-import type { CompileOptions, CompileResult, IncludedComponent } from './types/compiler';
+import type {
+  CompileOptions,
+  CompileResult,
+  CompilerWarning,
+  IncludedComponent
+} from './types/compiler';
 import { CompilerError } from './types/compiler';
 import type { FlattenResult } from './transformer/component-flattener';
 import { generateReact } from './generators/react';
@@ -214,6 +219,7 @@ export function compile(source: string, options: CompileOptions): CompileResult 
 
     // Compile included components if enabled
     let includedComponents: IncludedComponent[] | undefined;
+    const includedWarnings: CompilerWarning[] = [];
 
     if (includeReferencesEnabled && flattenResult) {
       includedComponents = [];
@@ -256,6 +262,16 @@ export function compile(source: string, options: CompileOptions): CompileResult 
           }
         }
 
+        // A referenced component's diagnostics belong on the compile result
+        // too, tagged with where they came from — the caller is compiling one
+        // entry point and would otherwise never see them.
+        for (const warning of compiled.ir.warnings ?? []) {
+          includedWarnings.push({
+            message: `${basename(componentPath)}: ${warning.message}`,
+            code: warning.code
+          });
+        }
+
         includedComponents.push({
           path: componentPath,
           name: compiled.ir.name,
@@ -273,6 +289,18 @@ export function compile(source: string, options: CompileOptions): CompileResult 
         props: propNames
       }
     };
+
+    const warnings: CompilerWarning[] = [
+      ...((tree.warnings ?? []) as any[]).map((warning: any) => ({
+        message: warning.message,
+        code: warning.code
+      })),
+      ...includedWarnings
+    ];
+
+    if (warnings.length > 0) {
+      result.warnings = warnings;
+    }
 
     if (includedComponents) {
       result.components = includedComponents;
@@ -293,6 +321,18 @@ export function compile(source: string, options: CompileOptions): CompileResult 
       'COMPILATION_ERROR'
     );
   }
+}
+
+/**
+ * The final segment of a component path.
+ *
+ * Warnings from a referenced component are prefixed with its filename so the
+ * reader can tell which file a diagnostic is about. Done by hand rather than
+ * with node:path, since this module is also bundled for the browser.
+ */
+function basename(componentPath: string): string {
+  const segments = componentPath.split(/[\\/]/);
+  return segments[segments.length - 1] || componentPath;
 }
 
 /**

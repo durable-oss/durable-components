@@ -9,6 +9,7 @@ import type { DurableComponentIR, TemplateNode } from '../types/ir';
 import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements } from '../utils/code-gen';
 import { arrowBody } from '../utils/arrow-body';
+import { withRefAccess } from '../utils/ref-access';
 import { generatePropsDeclaration, isTypeScript } from './vue-props';
 import { returnsTeardown } from '../utils/effect-cleanup';
 import {
@@ -16,6 +17,11 @@ import {
   behaviorsUsedBy,
   type BehaviorHelper
 } from './behavior-runtime';
+import {
+  partitionLifecycle,
+  scopedFor,
+  type ScopedBehavior
+} from './scoped-behavior';
 
 interface GeneratorContext {
   /** Track used composables for imports */
@@ -26,6 +32,8 @@ interface GeneratorContext {
   computedNames: Set<string>;
   /** Behavior helpers the emitted lifecycle effects call */
   usedBehaviors: Set<BehaviorHelper>;
+  /** Per-item behavior effects captured inside an {#each} */
+  scopedBehaviors: ScopedBehavior[];
   /** Track prop names, which are reached through the `props` object in script scope */
   propNames: Set<string>;
   /** Component name */
@@ -65,6 +73,7 @@ export function generateVue(ir: DurableComponentIR, options: { browserSafe?: boo
     stateRefs: new Set(),
     computedNames: new Set(),
     usedBehaviors: new Set(),
+    scopedBehaviors: partitionLifecycle(ir).scoped,
     propNames: new Set(ir.props.map((prop) => prop.name)),
     componentName: ir.name
   };
@@ -79,6 +88,10 @@ export function generateVue(ir: DurableComponentIR, options: { browserSafe?: boo
   // Generate template (HTML)
   const templateContent = generateTemplate(ir.template, ctx);
 
+  // Per-item behavior directives. Generated after the template so the
+  // placeholders above have registered which ones are actually referenced.
+  const scopedDirectives = generateScopedBehaviorDirectives(ir, ctx);
+
   // Combine script and template
   const parts: string[] = [];
 
@@ -89,7 +102,13 @@ export function generateVue(ir: DurableComponentIR, options: { browserSafe?: boo
     const types = generateTypes(ir);
     const imports = joinStatements(vueImports, externalImports);
     const behaviorHelpers = behaviorHelperSource(ctx.usedBehaviors);
-    const fullScript = joinStatements(imports, types, behaviorHelpers, scriptContent);
+    const fullScript = joinStatements(
+      imports,
+      types,
+      behaviorHelpers,
+      scopedDirectives,
+      scriptContent
+    );
 
     // The script has to be marked as TypeScript whenever it actually contains
     // any: a TS source, or emitted type declarations. Props no longer force it
@@ -316,7 +335,9 @@ function generateStateDeclarations(ir: DurableComponentIR, ctx: GeneratorContext
  * returns is stashed in a module-local so the unmount hook can call it.
  */
 function generateLifecycleDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
-  const lifecycle = ir.lifecycle ?? [];
+  // Effects captured inside an {#each} become per-item directives instead; see
+  // generateScopedBehaviorDirectives.
+  const lifecycle = partitionLifecycle(ir).componentLevel;
   if (lifecycle.length === 0) return '';
 
   ctx.usedComposables.add('onMounted');
@@ -406,6 +427,10 @@ function generateFunctionDeclarations(ir: DurableComponentIR, ctx: GeneratorCont
       );
     }
 
+    // A bind:this target is a ref too, so `panel.focus()` has to reach the
+    // element through .value or the call lands on the ref object and throws.
+    body = withRefAccess(body, ir.refs, 'value');
+
     // Props are reached through the `props` object in script scope, so a bare
     // prop identifier has to be qualified — unless a parameter of this function
     // shadows it, in which case the local binding is what the body means.
@@ -455,8 +480,7 @@ function generateTemplate(node: TemplateNode, ctx: GeneratorContext, depth: numb
       return `<!-- ${node.content} -->`;
 
     case 'dce-behavior':
-      // Behavior primitives contribute a lifecycle effect, not markup.
-      return '';
+      return generateDceBehavior(node, ctx);
 
     case 'dce-element':
       return generateDceElement(node, ctx, depth);
@@ -653,8 +677,18 @@ function generateEach(node: any, ctx: GeneratorContext, depth: number): string {
   // Add key if specified
   const keyAttr = key ? ` ${vueDynamicAttr(':key', transformTemplateExpression(key, ctx))}` : '';
 
-  // Insert v-for into the first child element
   const childLines = children.split('\n');
+  const elementLines = childLines.filter((line: string) => line.trim().startsWith('<'));
+
+  // A loop body with more than one root element has to iterate as a whole, or
+  // only the first root repeats and the rest fall outside the loop scope —
+  // where the item binding does not exist. <template> carries v-for without
+  // adding an element to the output.
+  if (elementLines.length > 1) {
+    return `<template ${vFor}${keyAttr}>\n${indent(children)}\n</template>`;
+  }
+
+  // Insert v-for into the single child element
   const firstNonEmptyLine = childLines.findIndex((line: string) => line.trim().length > 0);
 
   if (firstNonEmptyLine >= 0 && childLines[firstNonEmptyLine].trim().startsWith('<')) {
@@ -999,4 +1033,83 @@ function generateDceHead(node: any, ctx: GeneratorContext, depth: number): strin
     .join('\n');
 
   return `<Teleport to="head">\n${indent(childrenHTML)}\n</Teleport>`;
+}
+
+
+/**
+ * A per-item behavior effect compiles to a custom directive, so the name has
+ * to be a `vFoo` binding for `<script setup>` to pick it up as `v-foo`.
+ */
+function scopedDirectiveName(scoped: ScopedBehavior): string {
+  return `vDce${scoped.scope.id.replace(/[^\w]/g, '_')}`;
+}
+
+/** The template-side spelling of the directive, e.g. `v-dce-timer-0`. */
+function scopedDirectiveTag(scoped: ScopedBehavior): string {
+  return `v-${scopedDirectiveName(scoped)
+    .replace(/^v/, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/_/g, '-')
+    .toLowerCase()}`;
+}
+
+/**
+ * Render the placeholder a behavior primitive leaves in the template.
+ *
+ * Component-level effects render nothing. One captured inside an {#each}
+ * attaches its generated directive to a zero-size element inside the loop
+ * body, so the effect runs once per item and tears down with that item.
+ */
+function generateDceBehavior(node: any, ctx: GeneratorContext): string {
+  const scoped = scopedFor(ctx.scopedBehaviors, node.scope);
+  if (!scoped) return '';
+
+  const binding = `[${scoped.props.join(', ')}]`;
+  const directive = vueDynamicAttr(scopedDirectiveTag(scoped), binding);
+
+  // `display: contents` keeps the host element out of layout.
+  return `<span style="display: contents" ${directive}></span>`;
+}
+
+/**
+ * Emit one custom directive per behavior effect captured inside an {#each}.
+ *
+ * A Vue SFC is a single file, so a per-item child component is not available.
+ * A directive is the equivalent: `mounted` runs when its element is created
+ * with the loop bindings as the binding value, and `unmounted` runs when that
+ * one item leaves the list.
+ */
+function generateScopedBehaviorDirectives(
+  ir: DurableComponentIR,
+  ctx: GeneratorContext
+): string {
+  const { scoped } = partitionLifecycle(ir);
+  if (scoped.length === 0) return '';
+
+  for (const helper of behaviorsUsedBy(scoped.map((entry) => entry.effect))) {
+    ctx.usedBehaviors.add(helper);
+  }
+
+  return scoped
+    .map((entry) => {
+      const { effect, props } = entry;
+      const name = scopedDirectiveName(entry);
+      const store = '__dceNode.__dceDestroy';
+
+      // The binding value carries the loop scope; unpacking it here keeps the
+      // emitted setup expression identical to every other target's.
+      const unpack = `const [${props.join(', ')}] = __dceBinding.value;`;
+      const setup = effect.teardown
+        ? `${effect.setup};\n${store} = () => ${effect.teardown};`
+        : `${store} = ${effect.setup};`;
+
+      return `const ${name} = {\n${indent(
+        `mounted(__dceNode, __dceBinding) {\n${indent(
+          `${unpack}\n${setup}`
+        )}\n},\nunmounted(__dceNode) {\n${indent(
+          `if (typeof ${store} === 'function') ${store}();`
+        )}\n}`
+      )}\n};`;
+    })
+    .join('\n\n');
 }

@@ -12,6 +12,7 @@ import * as path from 'path';
 import { compile } from '../index';
 import type { CompilerTarget, StyleMode } from '../types/compiler';
 import { startShowcaseServer } from '../showcase/server';
+import { formatWarning } from '../utils/format-warning';
 
 program
   .name('dcc')
@@ -62,6 +63,14 @@ program
       if (result.css && cssOutput) {
         fs.writeFileSync(cssOutput, result.css.code, 'utf-8');
         console.log(`✓ CSS written to ${cssOutput}`);
+      }
+
+      // Report diagnostics. These go to stderr so that piping the compiled
+      // output somewhere does not mix warnings into it.
+      if (result.warnings && result.warnings.length > 0) {
+        for (const warning of result.warnings) {
+          console.error(`⚠ ${formatWarning(warning, filename)}`);
+        }
       }
 
       // Show metadata

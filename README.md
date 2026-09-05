@@ -206,6 +206,69 @@ The focus trap honours `[autofocus]`, skips hidden and disabled elements, and
 cycles in both directions. The scroll lock compensates for scrollbar width so
 the page does not shift when it engages.
 
+#### Inside `{#each}`
+
+A primitive that reads a loop binding belongs to one item, not to the
+component, so it compiles per item rather than to a single hoisted effect:
+
+```html
+{#each toasts as toast}
+  <div class="toast">{toast.text}</div>
+  <dce:timer after={toast.ms} on:elapsed={() => dismiss(toast.id)} />
+{/each}
+```
+
+Each item gets its own timer, and that timer is torn down when the item leaves
+the list — not only when the whole component unmounts. React and Solid emit a
+small per-item component, Svelte an action, and Vue a custom directive.
+
+A primitive that reads nothing from the loop, such as a bare `<dce:scroll-lock />`,
+still compiles to one component-level effect, which is both correct and cheaper
+than one per item.
+
+### Element References
+
+`bind:this={panel}` declares `panel` and fills it with the element. Script code
+uses the bare name, and each target's accessor is added on the way out —
+`panel.current` on React, `panel.value` on Vue, the variable itself on Solid and
+Svelte:
+
+```html
+<script>
+  let panel;
+  function focusIt() { panel.focus(); }
+</script>
+
+<template>
+  <div bind:this={panel} tabindex="-1"></div>
+</template>
+```
+
+Two situations produce a warning on `compile()`'s `warnings` array rather than
+questionable output:
+
+| Code | Meaning |
+|---|---|
+| `REF_SHADOWS_STATE` | A name is both `$state` and a `bind:this` target. `bind:this` declares the reference itself, so the `$state` declaration is redundant and is dropped. |
+| `REF_BOUND_IN_LOOP` | A `bind:this` inside an `{#each}`. One name cannot hold every element the loop renders, and the targets disagree on what survives, so move the element into a child component. |
+
+### Diagnostics
+
+Warnings do not fail a build. They reach you through whichever entry point you
+compile with:
+
+- **`dcc compile`** prints them to stderr, so piping the compiled output
+  somewhere keeps that output clean.
+- **The Vite plugin** reports them through `this.warn`, so they appear in the
+  dev server output and the build log.
+- **The showcase server** prints each one once per component and again after
+  you edit the file, rather than on every recompile.
+- **`compile()`** returns them on `result.warnings` for anything building on
+  the API directly.
+
+With `includeReferences` enabled, a warning from a component your entry point
+imports is reported too, prefixed with the file it came from.
+
 ## 📦 Installation
 
 ```bash

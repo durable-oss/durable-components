@@ -10,6 +10,7 @@ import type { CompiledJS } from '../types/compiler';
 import { indent, joinStatements, objectLiteral } from '../utils/code-gen';
 import { generateModifierWrapper } from '../utils/event-modifiers';
 import { arrowBody } from '../utils/arrow-body';
+import { withRefAccess } from '../utils/ref-access';
 import {
   STYLE_HELPER_NAME,
   STYLE_HELPER_SOURCE,
@@ -20,6 +21,12 @@ import {
   behaviorsUsedBy,
   type BehaviorHelper
 } from './behavior-runtime';
+import {
+  partitionLifecycle,
+  scopedComponentName,
+  scopedFor,
+  type ScopedBehavior
+} from './scoped-behavior';
 
 interface GeneratorContext {
   /** Track used hooks for imports */
@@ -32,6 +39,8 @@ interface GeneratorContext {
   dynamicTags: Map<string, string>;
   /** Behavior helpers the emitted lifecycle effects call */
   usedBehaviors: Set<BehaviorHelper>;
+  /** Per-item behavior effects captured inside an {#each} */
+  scopedBehaviors: ScopedBehavior[];
   /** Component name */
   componentName: string;
 }
@@ -46,6 +55,7 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
     usesStyleHelper: false,
     dynamicTags: new Map(),
     usedBehaviors: new Set(),
+    scopedBehaviors: partitionLifecycle(ir).scoped,
     componentName: ir.name
   };
 
@@ -54,6 +64,12 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
   const types = generateTypes(ir);
   const propsInterface = generatePropsInterface(ir);
   const component = generateComponent(ir, ctx);
+
+  // Per-item behavior components are declared ahead of the component that
+  // renders them, so their effects run in each iteration's own scope. This
+  // runs before the imports and helper sources are computed below, since it
+  // registers the hooks and behavior helpers those need.
+  const scopedComponents = generateScopedBehaviorComponents(ir, ctx);
 
   // Generate React imports
   const reactImports = generateReactImports(ctx);
@@ -71,6 +87,7 @@ export function generateReact(ir: DurableComponentIR): CompiledJS {
     propsInterface,
     styleHelper,
     behaviorHelpers,
+    scopedComponents,
     component
   );
 
@@ -317,7 +334,9 @@ const COMPOUND_ASSIGNMENT_OPERATORS = '>>>|\\*\\*|<<|>>|&&|\\|\\||\\?\\?|[+\\-*/
  * the cleanup contract useEffect expects.
  */
 function generateLifecycleDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
-  const lifecycle = ir.lifecycle ?? [];
+  // Effects captured inside an {#each} are emitted per item instead; see
+  // generateScopedBehaviorComponents.
+  const lifecycle = partitionLifecycle(ir).componentLevel;
   if (lifecycle.length === 0) return '';
 
   ctx.usedHooks.add('useEffect');
@@ -327,19 +346,14 @@ function generateLifecycleDeclarations(ir: DurableComponentIR, ctx: GeneratorCon
 
   // A `bind:this` target is a ref object in React, so the element it holds is
   // reached through `.current`.
-  const withRefAccess = (code: string): string =>
-    (ir.refs ?? []).reduce(
-      (acc, ref) =>
-        acc.replace(new RegExp(`\\b${ref.name}\\b(?!\\.current)`, 'g'), `${ref.name}.current`),
-      code
-    );
+  const refAccess = (code: string): string => withRefAccess(code, ir.refs, 'current');
 
   return lifecycle
     .map((raw) => {
       const effect = {
         ...raw,
-        setup: withRefAccess(raw.setup),
-        teardown: raw.teardown ? withRefAccess(raw.teardown) : undefined
+        setup: refAccess(raw.setup),
+        teardown: raw.teardown ? refAccess(raw.teardown) : undefined
       };
 
       if (effect.teardown) {
@@ -425,7 +439,10 @@ function generateEffectDeclarations(ir: DurableComponentIR, ctx: GeneratorContex
 function generateFunctionDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
   const declarations = ir.functions.map((func) => {
     const params = func.params?.join(', ') || '';
-    let body = applySetterTransforms(func.body, ctx);
+    // A ref holds the element on `.current`, so `panel.focus()` in the DSL has
+    // to become `panel.current.focus()` here or the call lands on the ref
+    // container and throws.
+    let body = withRefAccess(applySetterTransforms(func.body, ctx), ir.refs, 'current');
     const functionBody = body.startsWith('{') ? body : `{\n${indent(body)}\n}`;
     const asyncPrefix = func.async ? 'async ' : '';
     return `const ${func.name} = ${asyncPrefix}(${params}) => ${functionBody};`;
@@ -464,8 +481,7 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
       return `{/* ${node.content} */}`;
 
     case 'dce-behavior':
-      // Behavior primitives contribute a lifecycle effect, not markup.
-      return '';
+      return generateDceBehaviorJSX(node, ctx);
 
     case 'dce-element':
       return generateDceElementJSX(node, ctx, depth);
@@ -842,13 +858,16 @@ function generateEachJSX(node: any, ctx: GeneratorContext, depth: number): strin
   const array = transformExpression(node.expression, {} as any);
   const item = node.itemName;
   const index = node.indexName || 'index';
+  // An explicit `{#each items as item (item.id)}` key identifies the item
+  // across reorders; the loop index is only a fallback, and a poor one, since
+  // it makes React reuse the wrong element whenever the list is reordered.
   const key = node.key ? transformExpression(node.key, {} as any) : index;
 
   const renderedChildren = node.children
     .map((child: any) => generateJSX(child, ctx, depth + 1))
     .filter(Boolean);
 
-  const body = eachReturnBody(renderedChildren, index);
+  const body = eachReturnBody(renderedChildren, key);
 
   return `{${array}.map((${item}, ${index}) => (\n${indent(body)}\n))}`;
 }
@@ -860,7 +879,15 @@ function generateEachJSX(node: any, ctx: GeneratorContext, depth: number): strin
  * literal). Multiple children are wrapped in a fragment so the callback returns
  * a single node.
  */
-function eachReturnBody(children: string[], index: string): string {
+/**
+ * Build one iteration's JSX, carrying the key on whichever node repeats.
+ *
+ * React matches list children by the key on the element the map callback
+ * returns. With several roots that node is the wrapping fragment, so the key
+ * belongs there — on an inner element it is invisible to reconciliation, and
+ * the shorthand `<>` cannot take props, hence the explicit React.Fragment.
+ */
+function eachReturnBody(children: string[], key: string): string {
   if (children.length === 1) {
     const only = children[0];
     // A single conditional/expression child is already `{...}`; unwrap it.
@@ -869,13 +896,10 @@ function eachReturnBody(children: string[], index: string): string {
       return unwrapped;
     }
     // A single element child: inject the key prop.
-    return only.replace(/^(<\w[^>]*?)( \/>|>)/, `$1 key={${index}}$2`);
+    return only.replace(/^(<\w[^>]*?)( \/>|>)/, `$1 key={${key}}$2`);
   }
 
-  // Multiple children: key the first element and wrap them in a fragment.
-  const joined = children.join('\n');
-  const keyed = joined.replace(/^(<\w[^>]*?)( \/>|>)/, `$1 key={${index}}$2`);
-  return `<>\n${indent(keyed)}\n</>`;
+  return `<React.Fragment key={${key}}>\n${indent(children.join('\n'))}\n</React.Fragment>`;
 }
 
 /**
@@ -1093,4 +1117,61 @@ function generateDceHeadJSX(
  */
 function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+
+/**
+ * Render the placeholder a behavior primitive leaves in the template.
+ *
+ * Component-level effects render nothing. One captured inside an {#each}
+ * renders its generated per-item component, passing the loop bindings through
+ * so the effect can read them.
+ */
+function generateDceBehaviorJSX(node: any, ctx: GeneratorContext): string {
+  const scoped = scopedFor(ctx.scopedBehaviors, node.scope);
+  if (!scoped) return '';
+
+  const name = scopedComponentName(ctx.componentName, scoped.scope);
+  const props = scoped.props.map((prop) => `${prop}={${prop}}`).join(' ');
+
+  return `<${name} ${props} />`;
+}
+
+/**
+ * Emit one component per behavior effect captured inside an {#each}.
+ *
+ * Hooks cannot run inside `.map()`, so the effect moves into a component of
+ * its own that the loop body renders. Its dependency array lists the props it
+ * closes over, so the timer resets if an item's delay changes rather than
+ * holding a stale value.
+ */
+function generateScopedBehaviorComponents(
+  ir: DurableComponentIR,
+  ctx: GeneratorContext
+): string {
+  const { scoped } = partitionLifecycle(ir);
+  if (scoped.length === 0) return '';
+
+  ctx.usedHooks.add('useEffect');
+  for (const helper of behaviorsUsedBy(scoped.map((entry) => entry.effect))) {
+    ctx.usedBehaviors.add(helper);
+  }
+
+  return scoped
+    .map(({ scope, effect, props }) => {
+      const name = scopedComponentName(ctx.componentName, scope);
+      const deps = props.join(', ');
+      const signature = `{ ${props.join(', ')} }: any`;
+
+      const body = effect.teardown
+        ? `useEffect(() => {\n${indent(
+            `${effect.setup};\nreturn () => ${effect.teardown};`
+          )}\n}, [${deps}]);`
+        : `useEffect(() => ${effect.setup}, [${deps}]);`;
+
+      return `function ${name}(${signature}) {\n${indent(
+        `${body}\n\nreturn null;`
+      )}\n}`;
+    })
+    .join('\n\n');
 }

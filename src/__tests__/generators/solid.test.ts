@@ -267,7 +267,7 @@ describe('Solid Generator', () => {
       expect(result.code).toContain('<em');
     });
 
-    it('should render a list with .map()', () => {
+    it('should render a list with <For>', () => {
       const ir = irWithTemplate('List', [
         {
           type: 'each',
@@ -279,7 +279,10 @@ describe('Solid Generator', () => {
 
       const result = generateSolid(ir);
 
-      expect(result.code).toContain('items.map((item, index)');
+      // <For> matches items by reference, so a reorder moves the existing DOM
+      // nodes instead of rebuilding the list the way .map() does.
+      expect(result.code).toContain('<For each={items}>{(item) =>');
+      expect(result.code).toContain("import { For } from 'solid-js';");
       expect(result.code).toContain('<li');
     });
 

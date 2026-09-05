@@ -83,6 +83,34 @@ export interface LifecycleEffect {
   teardown?: string;
   /** Which primitive produced this, for diagnostics. */
   source?: string;
+  /**
+   * Set when the primitive sits inside an `{#each}` and closes over the loop
+   * scope. The effect then belongs to one iteration rather than to the
+   * component, so it is emitted inside a generated per-item component that
+   * receives `params` as props instead of at component scope, where the loop
+   * variable does not exist.
+   */
+  scope?: LifecycleScope;
+}
+
+/**
+ * The loop scope a lifecycle effect was captured in.
+ */
+export interface LifecycleScope {
+  /** Identifier tying the effect to its `dce-behavior` placeholder. */
+  id: string;
+  /** Loop variables the effect reads, in binding order. */
+  params: string[];
+  /** Non-loop identifiers the effect reads, e.g. handler functions. */
+  captures: string[];
+}
+
+/**
+ * A non-fatal diagnostic raised while building the IR.
+ */
+export interface IRWarning {
+  message: string;
+  code?: string;
 }
 
 /**
@@ -285,6 +313,12 @@ export interface DceBehaviorNode extends BaseTemplateNode {
   type: 'dce-behavior';
   /** Which primitive this came from, e.g. 'escape'. */
   behavior: string;
+  /**
+   * Set when the primitive closes over an `{#each}` scope. The generators
+   * render a per-item component here instead of nothing, so the effect runs
+   * once per iteration with the loop variable in scope.
+   */
+  scope?: LifecycleScope;
 }
 
 /**
@@ -361,6 +395,9 @@ export interface DurableComponentIR extends Node {
 
   /** Element references (bind:this) */
   refs: RefDefinition[];
+
+  /** Diagnostics raised while building this IR, surfaced on the compile result */
+  warnings?: IRWarning[];
 
   /** Event handlers and helper functions */
   functions: FunctionDefinition[];

@@ -16,6 +16,12 @@ import {
   behaviorsUsedBy,
   type BehaviorHelper
 } from './behavior-runtime';
+import {
+  partitionLifecycle,
+  scopedComponentName,
+  scopedFor,
+  type ScopedBehavior
+} from './scoped-behavior';
 
 interface GeneratorContext {
   /** Track used Solid primitives for imports */
@@ -28,6 +34,8 @@ interface GeneratorContext {
   derivedNames: Set<string>;
   /** Behavior helpers the emitted lifecycle effects call */
   usedBehaviors: Set<BehaviorHelper>;
+  /** Per-item behavior effects captured inside an {#each} */
+  scopedBehaviors: ScopedBehavior[];
   /** Component name */
   componentName: string;
 }
@@ -42,6 +50,7 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
     stateSetters: new Map(),
     derivedNames: new Set(),
     usedBehaviors: new Set(),
+    scopedBehaviors: partitionLifecycle(ir).scoped,
     componentName: ir.name
   };
 
@@ -50,6 +59,11 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
   const types = generateTypes(ir);
   const propsInterface = generatePropsInterface(ir);
   const component = generateComponent(ir, ctx);
+
+  // Per-item behavior components are declared ahead of the component that
+  // renders them. This runs before the imports and helper sources below, since
+  // it registers the primitives and behavior helpers those need.
+  const scopedComponents = generateScopedBehaviorComponents(ir, ctx);
 
   // Generate Solid imports
   const solidImports = generateSolidImports(ctx);
@@ -62,6 +76,7 @@ export function generateSolid(ir: DurableComponentIR): CompiledJS {
     types,
     propsInterface,
     behaviorHelpers,
+    scopedComponents,
     component
   );
 
@@ -311,7 +326,9 @@ function generateDerivedDeclarations(ir: DurableComponentIR, ctx: GeneratorConte
  * discarded.
  */
 function generateLifecycleDeclarations(ir: DurableComponentIR, ctx: GeneratorContext): string {
-  const lifecycle = ir.lifecycle ?? [];
+  // Effects captured inside an {#each} are emitted per item instead; see
+  // generateScopedBehaviorComponents.
+  const lifecycle = partitionLifecycle(ir).componentLevel;
   if (lifecycle.length === 0) return '';
 
   ctx.usedPrimitives.add('onMount');
@@ -493,8 +510,7 @@ function generateJSX(node: TemplateNode, ctx: GeneratorContext, depth: number = 
       return `{/* ${node.content} */}`;
 
     case 'dce-behavior':
-      // Behavior primitives contribute a lifecycle effect, not markup.
-      return '';
+      return generateDceBehaviorJSX(node, ctx);
 
     case 'dce-element':
       return generateDceElementJSX(node, ctx, depth);
@@ -802,29 +818,49 @@ function wrapJsxChildren(children: string[]): string {
 /**
  * Generate each loop JSX (using For component would be better, but .map works)
  */
+/**
+ * Generate an each block.
+ *
+ * Solid reconciles lists with `<For>`, which matches items by reference and
+ * moves the existing DOM nodes when the array is reordered. Plain `.map()`
+ * re-creates every node on any change, and a `key` prop means nothing to Solid
+ * — it is a React concept, so emitting one only looked like it keyed the list.
+ *
+ * `<For>` passes the index as a signal, so a body that reads it calls
+ * `index()`. That rewrite is confined to bodies that actually declare an index
+ * binding, leaving every other loop untouched.
+ */
 function generateEachJSX(node: any, ctx: GeneratorContext, depth: number): string {
   const array = transformExpression(node.expression, {} as any, ctx);
   const item = node.itemName;
-  const index = node.indexName || 'index';
-  const key = node.key ? transformExpression(node.key, {} as any, ctx) : index;
+  const index = node.indexName;
+
+  ctx.usedPrimitives.add('For');
 
   const renderedChildren = node.children
-    .map((child: any) => {
-      // Replace item references in children
-      let jsx = generateJSX(child, ctx, depth + 1);
-      // Add key prop to first child element if key is specified
-      if (node.key && child.type === 'element') {
-        // Insert key prop into the first element
-        jsx = jsx.replace(/^(\s*<\w+)/, `$1 key={${key}}`);
-      }
-      return jsx;
-    })
+    .map((child: any) => generateJSX(child, ctx, depth + 1))
     .filter(Boolean);
 
-  const body = eachReturnBody(renderedChildren);
+  const body = index
+    ? asIndexSignal(eachReturnBody(renderedChildren), index)
+    : eachReturnBody(renderedChildren);
 
-  // SolidJS .map() works well for simple cases
-  return `{${array}.map((${item}, ${index}) => (\n${indent(body)}\n))}`;
+  const params = index ? `(${item}, ${index})` : `(${item})`;
+
+  return `<For each={${array}}>{${params} => (\n${indent(body)}\n)}</For>`;
+}
+
+/**
+ * Rewrite reads of a `<For>` index binding as signal calls.
+ *
+ * The index arrives as an accessor rather than a number, so `{i}` has to
+ * become `{i()}`. Property reads (`row.i`) and existing calls are left alone.
+ */
+function asIndexSignal(body: string, index: string): string {
+  return body.replace(
+    new RegExp(`(?<![.\\w$])${index}\\b(?!\\s*[(:=])`, 'g'),
+    `${index}()`
+  );
 }
 
 /**
@@ -1084,4 +1120,64 @@ function generateDceHeadJSX(
  */
 function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+
+/**
+ * Render the placeholder a behavior primitive leaves in the template.
+ *
+ * Component-level effects render nothing. One captured inside an {#each}
+ * renders its generated per-item component, passing the loop bindings through.
+ */
+function generateDceBehaviorJSX(node: any, ctx: GeneratorContext): string {
+  const scoped = scopedFor(ctx.scopedBehaviors, node.scope);
+  if (!scoped) return '';
+
+  const name = scopedComponentName(ctx.componentName, scoped.scope);
+  const props = scoped.props.map((prop) => `${prop}={${prop}}`).join(' ');
+
+  return `<${name} ${props} />`;
+}
+
+/**
+ * Emit one component per behavior effect captured inside an {#each}.
+ *
+ * onMount cannot run inside `.map()`, so the effect moves into a component of
+ * its own that the loop body renders. Solid props are reactive getters, so the
+ * body reads them off `props` rather than destructuring, which would freeze
+ * the value at creation time.
+ */
+function generateScopedBehaviorComponents(
+  ir: DurableComponentIR,
+  ctx: GeneratorContext
+): string {
+  const { scoped } = partitionLifecycle(ir);
+  if (scoped.length === 0) return '';
+
+  ctx.usedPrimitives.add('onMount');
+  ctx.usedPrimitives.add('onCleanup');
+  for (const helper of behaviorsUsedBy(scoped.map((entry) => entry.effect))) {
+    ctx.usedBehaviors.add(helper);
+  }
+
+  return scoped
+    .map(({ scope, effect, props }) => {
+      const name = scopedComponentName(ctx.componentName, scope);
+      const viaProps = (code: string): string =>
+        props.reduce(
+          (acc, prop) => acc.replace(new RegExp(`\\b${prop}\\b`, 'g'), `props.${prop}`),
+          code
+        );
+
+      const setup = effect.teardown
+        ? `${viaProps(effect.setup)};\nonCleanup(() => ${viaProps(effect.teardown)});`
+        : `onCleanup(${viaProps(effect.setup)});`;
+
+      const body = `onMount(() => {\n${indent(setup)}\n});`;
+
+      return `function ${name}(props: any) {\n${indent(
+        `${body}\n\nreturn null;`
+      )}\n}`;
+    })
+    .join('\n\n');
 }
